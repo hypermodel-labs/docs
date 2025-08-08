@@ -1,13 +1,49 @@
 # Hypermodel 
 
 ## Overview 
-Context is everything. Make your coding agents better with the right documentation, _auto-updated_ for you and _in context_, all the time. 
+Context is everything for coding agents. 
 
-### Use `@hypermodel/docs` MCP server with your favourite AI coding agent 
+Make your coding agents better with the right documentation, _auto-updated_ for you and _in context_, all the time. 
 
-#### Auto-install in one command:  
 
-> npx -y -p @hypermodel/cli add-docs <`claude` | `cursor` | other IDE client> docs
+
+## Auto-install in one command  
+
+> npx -y -p @hypermodel/cli add-docs claude
+
+### Usage with an AI coding agent like Claude Code or Amp
+
+Use `@hypermodel/docs` MCP server with your favourite AI coding agent 
+
+**Common Usage Patterns**
+  
+**Examples**: 
+
+1. `can you call search the docs on how to use "contact" objects ?`
+  
+2. `Explain amp.tools.stopTimeout and its default in the docs of ampcode. use docs tool`
+
+**Quick Start Flow**
+  1. **Check available docs**: Use `list-docs` to see what documentation is already available.
+  2. **Search documentation**: Use `search-docs` with the index name, your query, and optional result count.
+  3. **Create new indices** (if needed): Use `index` tool to index a new documentation source if not already present. 
+  
+>  Tip: Use the base documentation URL (https://supabase.com/docs) instead of an inner link (https://supabase.com/docs/guides/functions/dependencies)
+
+
+
+**Tools exposed for your coding agents**
+
+| Tool           | Description                                                      | Output / Result                                                      |
+|----------------|------------------------------------------------------------------|----------------------------------------------------------------------|
+| `list-docs` | Check what documentation is available                            | `{ "indexes": ["ampcode-com", "developer-salesforce-com"] }`         |
+| `search-docs`  | Search documentation for answers                                 | Returns ranked results with URLs, titles, snippets, and relevance scores |
+| `index`        | Add a new documentation source if not already present            | Creates searchable index from the documentation site                  |
+
+**Tips for Best Results**
+  - Use natural language queries with the terms `search` `docs` anywhere in your prompt for the MCP tool to be used. 
+  - Start with broader queries, then narrow down based on results
+  - Results include relevance scores to help identify the most useful content
 
 #### All IDEs supported
 

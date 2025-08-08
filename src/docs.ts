@@ -550,8 +550,8 @@ export function createDocsTool(server: McpServer) {
 
   // Create a tool to list all the indexes that have been created
   server.tool(
-    'list-indexes',
-    'List available documentation indexes discovered in the database.',
+    'list-docs',
+    'List available documentation indexes / docs / documentation discovered in the database.',
     {},
     async () => {
       const connectionString = process.env.POSTGRES_CONNECTION_STRING;
