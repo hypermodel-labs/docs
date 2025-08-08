@@ -1,0 +1,86 @@
+{
+    "name": "@hypermodel/docs",
+    "version": "0.0.1",
+    "type": "module",
+    "main": "dist/index.js",
+    "bin": {
+        "docs": "./dist/index.js"
+    },
+    "scripts": {
+        "build": "vite build",
+        "start": "node dist/index.js",
+        "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+        "publish": "npm publish --access public",
+        "lint": "eslint \"src/**/*.{js,ts}\"",
+        "lint:fix": "eslint \"src/**/*.{js,ts}\" --fix",
+        "format": "prettier --write \"src/**/*.{js,ts,json,md}\"",
+        "format:check": "prettier --check \"src/**/*.{js,ts,json,md}\"",
+        "prepare": "husky"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/hypermodel-labs/docs-mcp.git"
+    },
+    "author": "Hypermodel Labs",
+    "description": "MCP server for enhanced documentation for AI coding agents",
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.6.1",
+        "axios": "^1.8.1",
+        "build": "^0.1.4",
+        "dashify": "^2.0.0",
+        "detect-port": "^2.1.0",
+        "dotenv": "^16.4.7",
+        "express": "^4.21.2",
+        "cheerio": "^1.0.0-rc.12",
+        "openai": "^4.77.0",
+        "pg": "^8.12.0",
+        "zod": "^3.24.2"
+    },
+    "devDependencies": {
+        "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
+        "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
+        "@eslint/js": "^9.31.0",
+        "@types/dashify": "^1.0.3",
+        "@types/dotenv": "^8.2.0",
+        "@types/express": "^5.0.1",
+        "@types/minimist": "^1.2.5",
+        "@types/node": "^22.13.5",
+        "@types/pg": "^8.11.10",
+        "@types/react": "^18.2.64",
+        "@types/react-dom": "^18.2.21",
+        "@types/rollup": "^0.54.0",
+        "@typescript-eslint/eslint-plugin": "^8.37.0",
+        "@typescript-eslint/parser": "^8.37.0",
+        "eslint": "^9.31.0",
+        "eslint-config-prettier": "^10.1.5",
+        "eslint-plugin-prettier": "^5.5.1",
+        "events": "^3.3.0",
+        "husky": "^9.1.7",
+        "lint-staged": "^16.1.2",
+        "prettier": "^3.6.2",
+        "process": "^0.11.10",
+        "rollup": "^4.37.0",
+        "rollup-plugin-node-polyfills": "^0.2.1",
+        "stream-browserify": "^3.0.0",
+        "typescript": "^5.7.3",
+        "vite": "^5.4.14",
+        "vite-plugin-node": "^5.0.0",
+        "vite-plugin-node-polyfills": "^0.23.0"
+    },
+    "files": [
+        "dist"
+    ],
+    "lint-staged": {
+        "*.{js,ts}": [
+            "eslint --fix",
+            "prettier --write"
+        ],
+        "*.{json,md}": [
+            "prettier --write"
+        ]
+    }
+}
