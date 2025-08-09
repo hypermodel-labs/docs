@@ -18,8 +18,8 @@ export async function createTemporalClient(): Promise<Client> {
       address: temporalAddress,
       tls: {
         clientCertPair: {
-          crt: Buffer.from(temporalTlsCert, 'base64'),
-          key: Buffer.from(temporalTlsKey, 'base64'),
+          crt: Buffer.from(temporalTlsCert, 'utf8'),
+          key: Buffer.from(temporalTlsKey, 'utf8'),
         },
       },
     });
