@@ -1,7 +1,7 @@
 # Dockerfile for Temporal Worker
 
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:20-bookworm-slim AS builder
 
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@8.9.0 --activate
@@ -17,7 +17,7 @@ COPY . .
 RUN pnpm build
 
 # Runtime stage
-FROM node:20-alpine AS runner
+FROM node:20-bookworm-slim AS runner
 
 ENV NODE_ENV=production
 WORKDIR /app
