@@ -1,13 +1,10 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import crypto from 'node:crypto';
 import { Client as PgClient } from 'pg';
 import OpenAI from 'openai';
 import os from 'node:os';
-import { createTemporalClient } from './temporal/client';
-import { indexDocumentationWorkflow } from './temporal/workflows';
 
 type CrawlOptions = {
   maxPages?: number;
@@ -373,164 +370,116 @@ async function upsertDocument(
   );
 }
 
+export async function indexDocumentationActivity(startUrl: string): Promise<{ indexName: string }> {
+  const indexName = deriveIndexNameFromUrl(startUrl);
+  const connectionString = process.env.POSTGRES_CONNECTION_STRING;
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!connectionString) throw new Error('POSTGRES_CONNECTION_STRING is not set');
+  if (!openaiApiKey) throw new Error('OPENAI_API_KEY is not set');
 
-export function createDocsTool(server: McpServer) {
-  // Create a tool to search for documentation
-  server.tool(
-    'search-docs',
-    'Use this tool to search vectorized documentation by index name. Requires DB and OpenAI to be configured. ALWAYS USE THE LIST-INDEXES TOOL TO GET THE INDEX NAME FIRST.',
-    {
-      index: z.string().describe('The vector DB index to search.'),
-      query: z.string().describe('The semantic query'),
-      topK: z.number().optional().default(10),
-    },
-    async ({ index, query, topK }) => {
-      const connectionString = process.env.POSTGRES_CONNECTION_STRING;
-      const openaiApiKey = process.env.OPENAI_API_KEY;
-      if (!connectionString) {
-        return { content: [{ type: 'text', text: 'Error: POSTGRES_CONNECTION_STRING not set' }] };
-      }
-      if (!openaiApiKey) {
-        return { content: [{ type: 'text', text: 'Error: OPENAI_API_KEY not set' }] };
-      }
+  const client = new PgClient({ connectionString });
+  const openai = new OpenAI({ apiKey: openaiApiKey });
+  await client.connect();
+  try {
+    await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
 
-      const client = new PgClient({ connectionString });
-      const openai = new OpenAI({ apiKey: openaiApiKey });
-      const table = `docs_${index}`;
-      const quotedTable = `"${table}"`;
-      try {
-        await client.connect();
-        // Generate embedding
-        const [embedding] = await embedBatch(openai, [query]);
-        const vectorParam = `[${embedding.join(',')}]`;
-        // Query by cosine distance
-        const { rows } = await client.query<any>(
-          `SELECT url, title, content, 1 - (embedding <=> $1::vector) AS score
-           FROM ${quotedTable}
-           ORDER BY embedding <=> $1::vector
-           LIMIT $2`,
-          [vectorParam, topK]
+    // Crawl and index
+    const batchSize = 16; // chunks per embedding batch
+    let pendingChunks: { url: string; title: string; content: string }[] = [];
+
+    const flush = async () => {
+      if (pendingChunks.length === 0) return;
+      const contents = pendingChunks.map(c => c.content);
+      const embeddings = await embedBatch(openai, contents);
+      for (let i = 0; i < pendingChunks.length; i += 1) {
+        const { url, title, content } = pendingChunks[i];
+        const embedding = embeddings[i];
+        const metadata = { source: url, type: 'html', title, size: content.length } as const;
+        await upsertDocument(
+          client,
+          indexName,
+          url + '#' + crypto.createHash('md5').update(content).digest('hex'),
+          title,
+          content,
+          embedding,
+          metadata
         );
-        const results = rows.map(
-          (r: { url: string; title: string; content: string; score: number }) => ({
-            url: r.url as string,
-            title: r.title as string,
-            snippet: (r.content as string).slice(0, 500),
-            score: Number(r.score),
-          })
-        );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ index, total: results.length, results }, null, 2),
-            },
-          ],
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(err);
-        return { content: [{ type: 'text', text: `Search failed: ${message}` }] };
-      } finally {
-        await client.end();
       }
-    }
-  );
+      pendingChunks = [];
+    };
 
-  // Create a tool to list all the indexes that have been created
-  server.tool(
-    'list-docs',
-    'List available documentation indexes / docs / documentation discovered in the database.',
-    {},
-    async () => {
-      const connectionString = process.env.POSTGRES_CONNECTION_STRING;
-      if (!connectionString) {
-        return { content: [{ type: 'text', text: 'Error: POSTGRES_CONNECTION_STRING not set' }] };
-      }
-      const client = new PgClient({ connectionString });
-      try {
-        await client.connect();
-        const { rows } = await client.query<{ tablename: string }>(
-          `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'docs_%' ORDER BY tablename`
-        );
-        const indexes = rows.map((r: { tablename: string }) =>
-          String(r.tablename).replace(/^docs_/, '')
-        );
-        return { content: [{ type: 'text', text: JSON.stringify({ indexes }, null, 2) }] };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(err);
-        return { content: [{ type: 'text', text: `Failed to list indexes: ${message}` }] };
-      } finally {
-        await client.end();
-      }
-    }
-  );
-  // Create a tool to index documentation from a public URL using Temporal
-  server.tool(
-    'index',
-    'Index documentation from a public URL. Crawls the site and embeds content into a vector DB using Temporal Cloud for background processing. ALWAYS USE THE LIST-INDEXES TOOL TO CHECK IF AN INDEX WITH THE NAME ALREADY EXISTS.',
-    {
-      url: z.string().describe('The URL to index documentation from'),
-    },
-    async ({ url }) => {
-      try {
-        const indexName = deriveIndexNameFromUrl(url);
-        const client = await createTemporalClient();
+    // Configure crawl from env
+    const maxPages = Number(process.env.DOCS_MAX_PAGES || '') || 10000;
+    const detectedCpus = Number(os.cpus()?.length || 0);
+    const defaultConcurrency = Math.min(16, Math.max(4, detectedCpus || 8));
+    const concurrency = Number(process.env.DOCS_CONCURRENCY || '') || defaultConcurrency;
+    const timeoutMs = Number(process.env.DOCS_TIMEOUT_MS || '') || 25000;
+    const userAgent = process.env.DOCS_USER_AGENT || DEFAULT_CRAWLER_UA;
+    const includeRegexEnv = process.env.DOCS_INCLUDE_REGEX;
+    const excludeRegexEnv = process.env.DOCS_EXCLUDE_REGEX;
 
-        const handle = await client.workflow.start(indexDocumentationWorkflow, {
-          args: [url],
-          taskQueue: 'docs-indexing',
-          workflowId: `index-${indexName}-${Date.now()}`,
-        });
+    const start = new URL(startUrl);
+    const pathPrefix = start.pathname && start.pathname !== '/' ? start.pathname : undefined;
 
-        const output = `Started indexing documentation from ${url} into index "${indexName}". Workflow ID: ${handle.workflowId}`;
-        return { content: [{ type: 'text', text: output }] };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(err);
-        return {
-          content: [{ type: 'text', text: `Failed to start indexing workflow: ${message}` }],
-        };
-      }
-    }
-  );
-
-  // Create a tool to check the status of an indexing job
-  server.tool(
-    'index-status',
-    'Check the status of a documentation indexing job by workflow ID.',
-    {
-      workflowId: z.string().describe('The workflow ID of the indexing job'),
-    },
-    async ({ workflowId }) => {
-      try {
-        const client = await createTemporalClient();
-        const handle = client.workflow.getHandle(workflowId);
-
-        const description = await handle.describe();
-
-        let output = `Workflow ${workflowId} status: ${description.status.name}`;
-
-        if (description.status.name === 'COMPLETED') {
-          try {
-            const result = await handle.result();
-            output += `\nResult: ${JSON.stringify(result)}`;
-          } catch (err) {
-            output += `\nCompleted with error: ${err}`;
-          }
-        } else if (description.status.name === 'RUNNING') {
-          output += '\nIndexing is still in progress...';
-        } else if (description.status.name === 'FAILED') {
-          output += '\nIndexing failed. Check worker logs for details.';
+    // Discover seed URLs from sitemaps (best-effort)
+    let seedUrls: string[] = [];
+    try {
+      const sitemaps = await discoverSitemaps(startUrl, timeoutMs, userAgent);
+      const sitemapUrls = await expandSitemapsToUrls(sitemaps, timeoutMs, userAgent);
+      // Filter to same domain and optional path prefix
+      seedUrls = sitemapUrls.filter(u => {
+        try {
+          const x = new URL(u);
+          if (x.hostname !== start.hostname) return false;
+          if (pathPrefix && !x.pathname.startsWith(pathPrefix)) return false;
+          return true;
+        } catch {
+          return false;
         }
-
-        return { content: [{ type: 'text', text: output }] };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(err);
-        return { content: [{ type: 'text', text: `Failed to get workflow status: ${message}` }] };
-      }
+      });
+    } catch {
+      // ignore sitemap failures
     }
-  );
+
+    const defaultUserAgent = 'docs-mcp-crawler/1.0 (+https://hypermodel.dev) axios';
+    // Provide baseline excludes even if env not set
+    const baseExcludePatterns: RegExp[] = [
+      /\/(login|logout|signin|signup|account|profile)(\/|$)/i,
+      /\/(tags|category|categories)(\/|$)/i,
+      /\/(feed|rss|comments)(\/|$)/i,
+      /\.(xml|json|txt)(\?|$)/i,
+    ];
+
+    await crawlSite(
+      startUrl,
+      {
+        maxPages,
+        sameDomainOnly: true,
+        concurrency,
+        timeoutMs,
+        userAgent: userAgent || defaultUserAgent,
+        seedUrls,
+        pathPrefix,
+        includePatterns: includeRegexEnv ? [new RegExp(includeRegexEnv)] : [],
+        excludePatterns: [
+          ...baseExcludePatterns,
+          ...(excludeRegexEnv ? [new RegExp(excludeRegexEnv)] : []),
+        ],
+      },
+      async page => {
+        const chunks = chunkText(page.text);
+        for (const chunk of chunks) {
+          pendingChunks.push({ url: page.url, title: page.title, content: chunk });
+          if (pendingChunks.length >= batchSize) {
+            await flush();
+          }
+        }
+      }
+    );
+    await flush();
+
+    return { indexName };
+  } finally {
+    await client.end();
+  }
 }

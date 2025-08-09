@@ -9,6 +9,7 @@
     "scripts": {
         "build": "vite build",
         "start": "node dist/index.js",
+        "start:worker": "node dist/temporal/worker.js",
         "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
         "publish": "npm publish --access public",
         "lint": "eslint \"src/**/*.{js,ts}\"",
@@ -29,15 +30,19 @@
     "description": "MCP server for enhanced documentation for AI coding agents",
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.6.1",
+        "@temporalio/client": "^1.12.1",
+        "@temporalio/worker": "^1.12.1",
+        "@temporalio/workflow": "^1.12.1",
         "axios": "^1.8.1",
         "build": "^0.1.4",
+        "cheerio": "^1.0.0-rc.12",
         "dashify": "^2.0.0",
         "detect-port": "^2.1.0",
         "dotenv": "^16.4.7",
         "express": "^4.21.2",
-        "cheerio": "^1.0.0-rc.12",
         "openai": "^4.77.0",
         "pg": "^8.12.0",
+        "temporalio": "^1.9.3",
         "zod": "^3.24.2"
     },
     "devDependencies": {

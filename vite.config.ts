@@ -7,59 +7,66 @@ function addShebangPlugin() {
   return {
     name: 'add-shebang',
     generateBundle(options: any, bundle: { [fileName: string]: OutputChunk | OutputAsset }) {
-      // Find the main entry point
-      const mainEntry = Object.values(bundle).find(
-        (chunk): chunk is OutputChunk => chunk.type === 'chunk' && chunk.isEntry
-      );
-
-      if (mainEntry) {
-        mainEntry.code = `#!/usr/bin/env node\n${mainEntry.code}`;
-      }
+      // Add shebang to entry files
+      Object.values(bundle).forEach(chunk => {
+        if (chunk.type === 'chunk' && chunk.isEntry) {
+          chunk.code = `#!/usr/bin/env node\n${chunk.code}`;
+        }
+      });
     },
   };
 }
 
-export default defineConfig({
-  server: {
-    port: 3001,
-  },
-  build: {
-    outDir: './dist',
-    lib: {
-      entry: './src/index.ts',
-      formats: ['es'],
-      fileName: format => `index.${format}.js`,
+export default defineConfig(({ command }) => {
+  const config = {
+    server: {
+      port: 3001,
     },
-    rollupOptions: {
-      external: [
-        'express',
-        'dotenv',
-        'zod',
-        'trieve-ts-sdk',
-        'axios',
-        'dashify',
-        'mintlify-validation',
-        'mintlify-openapi-parser',
-      ],
+    build: {
+      ssr: true,
+      outDir: './dist',
+      rollupOptions: {
+        input: {
+          index: './src/index.ts',
+          'temporal/worker': './src/temporal/worker.ts',
+          'temporal/workflows': './src/temporal/workflows.ts',
+        },
+        output: {
+          format: 'es' as const,
+          entryFileNames: '[name].js',
+        },
+        external: [
+          'express',
+          'dotenv',
+          'zod',
+          'axios',
+          'cheerio',
+          'node:crypto',
+          'pg',
+          'openai',
+          'node:os',
+          '@temporalio/client',
+          '@temporalio/worker',
+          '@temporalio/workflow',
+        ],
+      },
+      sourcemap: true,
+      target: 'node16',
     },
-    sourcemap: true,
-    target: 'node16',
-  },
-  plugins: [
-    addShebangPlugin(),
-    ...VitePluginNode({
-      adapter: 'express',
+    plugins: [addShebangPlugin()],
+  };
 
-      // tell the plugin where is your project entry
-      appPath: './src/index.ts',
+  // Only add VitePluginNode for development/serve
+  if (command === 'serve') {
+    (config.plugins as any).push(
+      ...VitePluginNode({
+        adapter: 'express',
+        appPath: './src/index.ts',
+        exportName: 'mcpApp',
+        initAppOnBoot: true,
+      })
+    );
+  }
 
-      // Optional, default: 'viteNodeApp'
-      // the name of named export of you app from the appPath file
-      exportName: 'mcpApp',
-
-      // Optional, default: false
-      // if you want to init your app on boot, set this to true
-      initAppOnBoot: true,
-    }),
-  ],
+  return config;
 });
