@@ -373,7 +373,6 @@ async function upsertDocument(
   );
 }
 
-
 export function createDocsTool(server: McpServer) {
   // Create a tool to search for documentation
   server.tool(
@@ -482,6 +481,8 @@ export function createDocsTool(server: McpServer) {
           args: [url],
           taskQueue: 'docs-indexing',
           workflowId: `index-${indexName}-${Date.now()}`,
+          workflowRunTimeout: '1 hour',
+          workflowExecutionTimeout: '1 hour',
         });
 
         const output = `Started indexing documentation from ${url} into index "${indexName}". Workflow ID: ${handle.workflowId}`;
