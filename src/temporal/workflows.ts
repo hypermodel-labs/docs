@@ -9,6 +9,9 @@ const { indexDocumentationActivity } = proxyActivities<typeof activities>({
   heartbeatTimeout: '1 hour',
 });
 
-export async function indexDocumentationWorkflow(startUrl: string): Promise<{ indexName: string }> {
-  return await indexDocumentationActivity(startUrl);
+export async function indexDocumentationWorkflow(
+  startUrl: string,
+  jobId: string
+): Promise<{ indexName: string; pagesIndexed: number; totalChunks: number }> {
+  return await indexDocumentationActivity(startUrl, jobId);
 }

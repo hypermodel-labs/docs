@@ -1,10 +1,10 @@
-import { z } from 'zod';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import crypto from 'node:crypto';
 import { Client as PgClient } from 'pg';
 import OpenAI from 'openai';
 import os from 'node:os';
+import { updateIndexingJobStatus } from '../scope';
 
 type CrawlOptions = {
   maxPages?: number;
@@ -214,7 +214,8 @@ async function expandSitemapsToUrls(
 async function crawlSite(
   startUrl: string,
   options: CrawlOptions,
-  onPage: (page: CrawledPage) => Promise<void>
+  onPage: (page: CrawledPage) => Promise<void>,
+  onProgress?: (discovered: number, processed: number) => void
 ) {
   const {
     maxPages = 200,
@@ -259,6 +260,9 @@ async function crawlSite(
       const { title, text } = extractMainText(res.data, current);
       if (text && text.length > 0) {
         await onPage({ url: current, title, text });
+        if (onProgress) {
+          onProgress(visited.size + queue.length, visited.size);
+        }
       }
       // discover links
       const $ = cheerio.load(res.data);
@@ -370,7 +374,10 @@ async function upsertDocument(
   );
 }
 
-export async function indexDocumentationActivity(startUrl: string): Promise<{ indexName: string }> {
+export async function indexDocumentationActivity(
+  startUrl: string,
+  jobId: string
+): Promise<{ indexName: string; pagesIndexed: number; totalChunks: number }> {
   const indexName = deriveIndexNameFromUrl(startUrl);
   const connectionString = process.env.POSTGRES_CONNECTION_STRING;
   const openaiApiKey = process.env.OPENAI_API_KEY;
@@ -380,6 +387,19 @@ export async function indexDocumentationActivity(startUrl: string): Promise<{ in
   const client = new PgClient({ connectionString });
   const openai = new OpenAI({ apiKey: openaiApiKey });
   await client.connect();
+
+  let pagesDiscovered = 0;
+  let pagesProcessed = 0;
+  let pagesIndexed = 0;
+  let totalChunks = 0;
+
+  try {
+    // Update status to running
+    await updateIndexingJobStatus(client, jobId, 'running');
+  } catch (error) {
+    console.warn('Failed to update job status to running:', error);
+  }
+
   try {
     await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
 
@@ -404,8 +424,21 @@ export async function indexDocumentationActivity(startUrl: string): Promise<{ in
           embedding,
           metadata
         );
+        totalChunks++;
       }
       pendingChunks = [];
+
+      // Update progress periodically
+      try {
+        await updateIndexingJobStatus(client, jobId, 'running', {
+          pagesDiscovered,
+          pagesProcessed,
+          pagesIndexed,
+          totalChunks,
+        });
+      } catch (error) {
+        console.warn('Failed to update job progress:', error);
+      }
     };
 
     // Configure crawl from env
@@ -467,18 +500,54 @@ export async function indexDocumentationActivity(startUrl: string): Promise<{ in
         ],
       },
       async page => {
+        pagesDiscovered++;
         const chunks = chunkText(page.text);
-        for (const chunk of chunks) {
-          pendingChunks.push({ url: page.url, title: page.title, content: chunk });
-          if (pendingChunks.length >= batchSize) {
-            await flush();
+        if (chunks.length > 0) {
+          pagesProcessed++;
+          pagesIndexed++;
+          for (const chunk of chunks) {
+            pendingChunks.push({ url: page.url, title: page.title, content: chunk });
+            if (pendingChunks.length >= batchSize) {
+              await flush();
+            }
           }
         }
+      },
+      (discovered, processed) => {
+        pagesDiscovered = discovered;
+        pagesProcessed = processed;
       }
     );
     await flush();
 
-    return { indexName };
+    // Update final status to completed
+    try {
+      await updateIndexingJobStatus(client, jobId, 'completed', {
+        pagesDiscovered,
+        pagesProcessed,
+        pagesIndexed,
+        totalChunks,
+      });
+    } catch (error) {
+      console.warn('Failed to update job status to completed:', error);
+    }
+
+    return { indexName, pagesIndexed, totalChunks };
+  } catch (error) {
+    // Update status to failed
+    try {
+      await updateIndexingJobStatus(client, jobId, 'failed', {
+        pagesDiscovered,
+        pagesProcessed,
+        pagesIndexed,
+        totalChunks,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorDetails: error instanceof Error ? { stack: error.stack } : { error: String(error) },
+      });
+    } catch (statusError) {
+      console.warn('Failed to update job status to failed:', statusError);
+    }
+    throw error;
   } finally {
     await client.end();
   }

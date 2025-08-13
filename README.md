@@ -24,21 +24,37 @@ Use `@hypermodel/docs` MCP server with your favourite AI coding agent
 2. `Explain amp.tools.stopTimeout and its default in the docs of ampcode. use docs tool`
 
 **Quick Start Flow**
-  1. **Check available docs**: Use `list-docs` to see what documentation is already available.
-  2. **Search documentation**: Use `search-docs` with the index name, your query, and optional result count.
-  3. **Create new indices** (if needed): Use `index` tool to index a new documentation source if not already present. 
+  1. **Link to your scope** (optional): Use `link` tool to associate with a user or team. Default scope is 'user'.
+  2. **Check available docs**: Use `list-docs` to see what documentation is available in your current scope.
+  3. **Search documentation**: Use `search-docs` with the index name, your query, and optional result count.
+  4. **Create new indices** (if needed): Use `index` tool to index a new documentation source if not already present. 
   
 >  Tip: Use the base documentation URL (https://supabase.com/docs) instead of an inner link (https://supabase.com/docs/guides/functions/dependencies)
+
+## Scope and Access Management
+
+**Scope Types**
+- `user` (default): Personal documentation access
+- `team`: Shared team documentation access
+
+**Linking Workflow**
+1. Link to a user: `link` tool with user identifier
+2. Link to a team: `link` tool with team identifier and scope='team' 
+3. Once linked, all `list-docs`, `search-docs`, and `index` operations work within that scope
+4. Each user has access to docs based on their permissions and scope context
 
 
 
 **Tools exposed for your coding agents**
 
-| Tool           | Description                                                      | Output / Result                                                      |
-|----------------|------------------------------------------------------------------|----------------------------------------------------------------------|
-| `list-docs` | Check what documentation is available                            | `{ "indexes": ["ampcode-com", "developer-salesforce-com"] }`         |
-| `search-docs`  | Search documentation for answers                                 | Returns ranked results with URLs, titles, snippets, and relevance scores |
-| `index`        | Add a new documentation source if not already present            | Creates searchable index from the documentation site                  |
+| Tool               | Description                                                      | Output / Result                                                      |
+|--------------------|------------------------------------------------------------------|----------------------------------------------------------------------|
+| `link`             | Link to a user or team to set your scope context                | Links your session to a user/team for scoped documentation access   |
+| `list-docs`        | Check what documentation is available in your current scope     | `{ "indexes": ["ampcode-com", "developer-salesforce-com"] }`         |
+| `search-docs`      | Search documentation for answers in your current scope          | Returns ranked results with URLs, titles, snippets, and relevance scores |
+| `index`            | Add a new documentation source if not already present            | Creates searchable index from the documentation site                  |
+| `index-status`     | Check detailed status and progress of indexing jobs             | Real-time progress, duration, error details for indexing workflows   |
+| `list-indexing-jobs` | List recent indexing jobs for your current scope              | History of indexing jobs with status, progress, and timing info      |
 
 **Tips for Best Results**
   - Use natural language queries with the terms `search` `docs` anywhere in your prompt for the MCP tool to be used. 

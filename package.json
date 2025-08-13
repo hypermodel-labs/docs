@@ -12,6 +12,8 @@
         "start:worker": "node dist/temporal/worker.js",
         "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
         "publish": "npm publish --access public",
+        "test:mcp": "npx tsx test_mcp.ts",
+        "test:mcp:ci": "npm run build && npx tsx test_mcp.ts",
         "lint": "eslint \"src/**/*.{js,ts}\"",
         "lint:fix": "eslint \"src/**/*.{js,ts}\" --fix",
         "format": "prettier --write \"src/**/*.{js,ts,json,md}\"",
