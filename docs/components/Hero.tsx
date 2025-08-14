@@ -5,7 +5,6 @@ const Hero = () => {
     <div className="hero-section">
       <div className="hero-content">
         <div className="hero-text">
-          <div className="new-badge">We're open source</div>
           <h1 className="hero-title">
             Context is
             <br />
