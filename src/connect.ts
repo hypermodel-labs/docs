@@ -55,6 +55,9 @@ export async function connectServer(
     return;
   }
   const app = express();
+  // Ensure Express respects X-Forwarded-* headers when behind a proxy/CDN (e.g., Cloudflare)
+  // This makes req.protocol reflect the original scheme (https) for correct metadata URLs
+  app.set('trust proxy', true);
   const port = await detect(DEFAULT_PORT);
   const transportManager = new TransportManager();
 
