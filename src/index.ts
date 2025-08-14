@@ -3,6 +3,7 @@ import { connectServer } from './connect';
 import { initialise } from './initialise';
 import { createDocsTool } from './docs';
 import express from 'express';
+import { createOAuthModule } from './oauth/oauth';
 
 const args = process.argv.slice(2);
 const useStdioTransport =
@@ -11,7 +12,8 @@ const useStdioTransport =
 async function main(): Promise<express.Application | undefined> {
   const server = initialise() as McpServer;
   createDocsTool(server);
-  const app = connectServer(server, useStdioTransport);
+  const oauth = createOAuthModule({ ssePath: '/sse' });
+  const app = connectServer(server, useStdioTransport, { oauth });
   return app;
 }
 
@@ -19,7 +21,7 @@ let mcpApp: Promise<express.Application | undefined> | null = null;
 
 try {
   mcpApp = main();
-} catch (error: any) {
+} catch (error) {
   console.error('Fatal error in trying to initialize MCP server: ', error);
   process.exit(1);
 }

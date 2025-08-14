@@ -1,8 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { detect } from 'detect-port';
+import type { OAuthModule } from './oauth/oauth';
 
 /**
  * Similar to https://github.com/modelcontextprotocol/typescript-sdk/pull/197/files
@@ -44,7 +45,8 @@ class TransportManager {
 const DEFAULT_PORT = 3001;
 export async function connectServer(
   server: McpServer,
-  useStdioTransport: boolean
+  useStdioTransport: boolean,
+  opts?: { oauth?: OAuthModule }
 ): Promise<express.Application | undefined> {
   if (useStdioTransport) {
     console.log('Connecting to MCP server over stdio');
@@ -58,8 +60,17 @@ export async function connectServer(
 
   // Increase JSON payload limit to handle larger messages
   app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: false }));
 
-  app.get('/sse', async (req: Request, res: Response) => {
+  // Install OAuth endpoints if provided
+  if (opts?.oauth) {
+    opts.oauth.install(app);
+  }
+
+  const bearerMiddleware: (req: Request, res: Response, next: NextFunction) => void =
+    opts?.oauth?.verifyBearer ?? ((req, _res, next) => next());
+
+  app.get('/sse', bearerMiddleware, async (req: Request, res: Response) => {
     try {
       // Set headers for SSE
       res.setHeader('Content-Type', 'text/event-stream');
@@ -76,7 +87,7 @@ export async function connectServer(
     }
   });
 
-  app.post('/messages', async (req: Request, res: Response) => {
+  app.post('/messages', bearerMiddleware, async (req: Request, res: Response) => {
     const connectionId = req.query.sessionId as string;
 
     console.log('Connection ID', connectionId);
