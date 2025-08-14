@@ -2,7 +2,6 @@
 
 [![npm version](https://img.shields.io/npm/v/%40hypermodel%2Fcli)](https://www.npmjs.com/package/@hypermodel/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/hypermodel-labs/cli/blob/main/LICENSE)
-[![Discord](https://img.shields.io/discord/1245734314282307644?label=Discord&logo=discord&color=5865F2)](https://discord.gg/E6BfkZAwUz)
 
 ## Overview 
 Context is everything for coding agents. 
