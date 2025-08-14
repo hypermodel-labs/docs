@@ -98,6 +98,8 @@ const config: DocsThemeConfig = {
         content="Context is everything - Make your coding agents & LLMs have up to date documentation on external APIs, always."
       />
       <link rel="icon" href="/favicon.ico" />
+      <link rel="icon" type="image/png" href="/favicon.png" />
+      <link rel="apple-touch-icon" href="/hypermodel_logo.png" />
       <style>{`
         /* Force dark mode and remove light mode styles */
         html {
