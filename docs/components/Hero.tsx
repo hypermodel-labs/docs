@@ -11,7 +11,7 @@ const Hero = () => {
             everything
           </h1>
           <p className="hero-subtitle">
-            Make your coding agents & LLMs, have up to date
+            Make your coding agents have up to date
             <br />
             documentation on external APIs, <em>always</em>.
           </p>
