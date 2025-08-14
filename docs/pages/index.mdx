@@ -1,0 +1,49 @@
+import Hero from '../components/Hero'
+
+<Hero />
+
+## Overview
+
+**Context is everything** for coding agents & LLMs.
+
+Make your coding agents better with the right documentation, _auto-updated_ for you and _in context_, all the time.
+
+## Features
+
+- **Documentation Indexing**: Index documentation from public URLs automatically
+- **Vector Search**: Semantic search through indexed documentation with AI  
+- **Team Collaboration**: Share documentation indexes with your entire team
+- **Auto-installation**: One command setup for popular IDEs like Claude, Cursor, and Amp
+
+## Quick Start
+
+Get started in under 2 minutes:
+
+1. **Install the CLI**: `npx @hypermodel/cli add-docs claude`
+2. **Index your docs**: Use the `index` tool to add documentation
+3. **Search & use**: Use `search-docs` to find relevant information
+4. **Share with team**: Use `link` tool to collaborate
+
+## Quick Links
+
+- [Getting Started](./quickstart)
+- [Available Tools](./tools)
+
+## Usage with AI Coding Agents
+
+Use `@hypermodel/docs` MCP server with your favourite AI coding agent like Claude Code, Cursor, or Amp.
+
+**Common Usage Patterns**
+
+**Examples**:
+
+1. `can you call search the docs on how to use "contact" objects ?`
+2. `Explain amp.tools.stopTimeout and its default in the docs of ampcode. use docs tool`
+
+**Quick Start Flow**
+1. **Link to your scope** (optional): Use `link` tool to associate with a user or team. Default scope is 'user'.
+2. **Check available docs**: Use `list-docs` to see what documentation is available in your current scope.
+3. **Search documentation**: Use `search-docs` with the index name, your query, and optional result count.
+4. **Create new indices** (if needed): Use `index` tool to index a new documentation source if not already present.
+
+> Tip: Use the base documentation URL (https://supabase.com/docs) instead of an inner link (https://supabase.com/docs/guides/functions/dependencies)

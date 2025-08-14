@@ -1,0 +1,500 @@
+/* Hypermodel Docs - Dark Theme Inspired by the Design */
+
+:root {
+  --primary-bg: #0a0a0a;
+  --secondary-bg: #1a1a1a;
+  --tertiary-bg: #2a2a2a;
+  --primary-text: #ffffff;
+  --secondary-text: #a1a1aa;
+  --accent-color: #8b5cf6;
+  --accent-hover: #ec4899;
+  --border-color: #333333;
+  --code-bg: #1e1e1e;
+  --terminal-bg: #0d1117;
+  --gradient-primary: linear-gradient(135deg, #0a0a0a 0%, #1a0a1a 50%, #0a0a0a 100%);
+  --gradient-hero: linear-gradient(135deg, #0a0a0a 0%, #2a1a3a 30%, #1a0a2a 70%, #0a0a0a 100%);
+}
+
+/* Global dark theme base */
+html {
+  color-scheme: dark !important;
+  scroll-behavior: smooth;
+}
+
+html[class~="dark"],
+html[class~="dark"] body {
+  background: var(--gradient-primary) !important;
+  color: var(--primary-text) !important;
+  min-height: 100vh;
+}
+
+/* Navigation styling */
+html[class~="dark"] .nextra-nav-container {
+  background-color: rgba(10, 10, 10, 0.95) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+}
+
+html[class~="dark"] .nextra-nav-container nav {
+  background-color: transparent !important;
+}
+
+/* Navigation icons - GitHub, etc. */
+html[class~="dark"] .nextra-nav-container a svg {
+  color: var(--primary-text) !important;
+  fill: var(--primary-text) !important;
+}
+
+html[class~="dark"] .nextra-nav-container a:hover svg {
+  color: var(--primary-text) !important;
+  fill: var(--primary-text) !important;
+}
+
+/* Specific targeting for navigation links */
+html[class~="dark"] nav a {
+  color: var(--primary-text) !important;
+}
+
+html[class~="dark"] nav a:hover {
+  color: var(--primary-text) !important;
+}
+
+/* GitHub icon and other external links in nav */
+html[class~="dark"] .nextra-nav-container .nx-text-gray-600 {
+  color: var(--primary-text) !important;
+}
+
+html[class~="dark"] .nextra-nav-container .nx-text-gray-600:hover {
+  color: var(--primary-text) !important;
+}
+
+html[class~="dark"] .nextra-nav-container .nextra-nav-container-blur {
+  background-color: rgba(10, 10, 10, 0.95) !important;
+}
+
+/* Sidebar styling */
+html[class~="dark"] .nextra-sidebar-container {
+  background-color: transparent !important;
+  border-right: 1px solid var(--border-color) !important;
+}
+
+html[class~="dark"] .nextra-sidebar {
+  background-color: transparent !important;
+}
+
+/* Remove background from Nextra's dark background class */
+:is(html[class~="dark"] .dark\:nx-bg-dark) {
+  background-color: transparent !important;
+}
+
+/* Additional Nextra dark background overrides */
+html[class~="dark"] .nx-bg-dark,
+html[class~="dark"] [class*="nx-bg-dark"] {
+  background-color: transparent !important;
+}
+
+html[class~="dark"] .nextra-sidebar ul li a {
+  color: var(--primary-text) !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+
+html[class~="dark"] .nextra-sidebar ul li a:hover {
+  background-color: var(--tertiary-bg) !important;
+  color: var(--primary-text) !important;
+}
+
+html[class~="dark"] .nextra-sidebar ul li a[aria-selected="true"] {
+  background-color: var(--tertiary-bg) !important;
+  color: var(--primary-text) !important;
+  font-weight: 600 !important;
+}
+
+/* Main content area */
+html[class~="dark"] .nextra-content {
+  background-color: transparent !important;
+}
+
+html[class~="dark"] main {
+  background-color: transparent !important;
+}
+
+/* Hero section styling - matching the design */
+.hero-section {
+  background: var(--gradient-hero);
+  padding: 4rem 2rem;
+  text-align: left;
+  border-radius: 16px;
+  margin: 2rem 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hero-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(ellipse at center, rgba(34, 197, 94, 0.1) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4rem;
+  align-items: center;
+}
+
+.hero-text {
+  color: var(--primary-text);
+}
+
+.hero-title {
+  font-size: 3.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, #ffffff 0%, #a1a1aa 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-subtitle {
+  font-size: 1.25rem;
+  color: var(--secondary-text);
+  margin-bottom: 1rem;
+  line-height: 1.6;
+}
+
+.hero-subtitle em {
+  color: var(--accent-color);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.hero-command {
+  background-color: var(--tertiary-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.9rem;
+  color: var(--primary-text);
+  margin-top: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hero-command:hover {
+  background-color: rgba(42, 42, 42, 0.8);
+  border-color: var(--accent-color);
+}
+
+.hero-command::before {
+  content: '>';
+  color: var(--accent-color);
+  font-weight: bold;
+}
+
+/* Terminal-style code block - matching the design */
+.terminal-demo {
+  background-color: var(--terminal-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.9rem;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.terminal-header {
+  background-color: #21262d;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.terminal-dots {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.terminal-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.terminal-dot:nth-child(1) { background-color: #ff5f56; }
+.terminal-dot:nth-child(2) { background-color: #ffbd2e; }
+.terminal-dot:nth-child(3) { background-color: #27ca3f; }
+
+.terminal-content {
+  padding: 1.5rem;
+  color: #e6edf3;
+  line-height: 1.6;
+}
+
+.terminal-line {
+  margin-bottom: 0.5rem;
+}
+
+.terminal-prompt {
+  color: var(--accent-color);
+  font-weight: bold;
+}
+
+.terminal-comment {
+  color: #7d8590;
+}
+
+.terminal-command {
+  color: #79c0ff;
+}
+
+/* NEW badge styling */
+.new-badge {
+  background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-hover) 100%);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.new-badge::before {
+  content: '';
+}
+
+/* Code blocks styling */
+html[class~="dark"] pre {
+  background-color: var(--terminal-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3) !important;
+}
+
+html[class~="dark"] code {
+  background-color: var(--code-bg) !important;
+  color: var(--primary-text) !important;
+  border-radius: 4px !important;
+  padding: 0.2rem 0.4rem !important;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
+}
+
+html[class~="dark"] pre code {
+  background-color: transparent !important;
+  padding: 0 !important;
+}
+
+/* Links and buttons */
+html[class~="dark"] a {
+  color: var(--primary-text) !important;
+  transition: color 0.2s ease !important;
+}
+
+html[class~="dark"] a:hover {
+  color: var(--primary-text) !important;
+  text-decoration: underline !important;
+}
+
+/* Ensure all content links are white */
+html[class~="dark"] .nextra-content a {
+  color: var(--primary-text) !important;
+}
+
+html[class~="dark"] .nextra-content a:hover {
+  color: var(--primary-text) !important;
+  text-decoration: underline !important;
+}
+
+/* MDX content links */
+html[class~="dark"] article a {
+  color: var(--primary-text) !important;
+}
+
+html[class~="dark"] article a:hover {
+  color: var(--primary-text) !important;
+  text-decoration: underline !important;
+}
+
+/* Edit link and feedback link */
+html[class~="dark"] .nextra-feedback-link,
+html[class~="dark"] .nextra-edit-link {
+  color: var(--primary-text) !important;
+}
+
+html[class~="dark"] .nextra-feedback-link:hover,
+html[class~="dark"] .nextra-edit-link:hover {
+  color: var(--primary-text) !important;
+  text-decoration: underline !important;
+}
+
+/* Search styling */
+html[class~="dark"] .nextra-search input {
+  background-color: var(--tertiary-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--primary-text) !important;
+  border-radius: 8px !important;
+}
+
+html[class~="dark"] .nextra-search input::placeholder {
+  color: var(--secondary-text) !important;
+}
+
+html[class~="dark"] .nextra-search input:focus {
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2) !important;
+}
+
+/* Table of contents */
+html[class~="dark"] .nextra-toc {
+  background-color: transparent !important;
+}
+
+html[class~="dark"] .nextra-toc a {
+  color: var(--secondary-text) !important;
+  transition: color 0.2s ease !important;
+}
+
+html[class~="dark"] .nextra-toc a:hover,
+html[class~="dark"] .nextra-toc a[aria-selected="true"] {
+  color: var(--primary-text) !important;
+}
+
+/* Footer styling */
+html[class~="dark"] footer {
+  background-color: var(--secondary-bg) !important;
+  border-top: 1px solid var(--border-color) !important;
+  color: var(--secondary-text) !important;
+}
+
+/* Banner styling */
+html[class~="dark"] .nextra-banner-container {
+  background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-hover) 100%) !important;
+  border-bottom: none !important;
+}
+
+html[class~="dark"] .nextra-banner {
+  color: white !important;
+}
+
+/* Typography improvements */
+html[class~="dark"] h1,
+html[class~="dark"] h2,
+html[class~="dark"] h3,
+html[class~="dark"] h4,
+html[class~="dark"] h5,
+html[class~="dark"] h6 {
+  color: var(--primary-text) !important;
+  font-weight: 600 !important;
+}
+
+html[class~="dark"] p {
+  color: var(--secondary-text) !important;
+  line-height: 1.7 !important;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .hero-content {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+  
+  .hero-title {
+    font-size: 2.5rem;
+  }
+  
+  .hero-section {
+    padding: 2rem 1rem;
+    margin: 1rem 0;
+  }
+  
+  .terminal-content {
+    padding: 1rem;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-title {
+    font-size: 2rem;
+  }
+  
+  .hero-subtitle {
+    font-size: 1.1rem;
+  }
+  
+  .hero-section {
+    padding: 1.5rem 1rem;
+  }
+}
+
+/* Scrollbar styling */
+html[class~="dark"] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+html[class~="dark"] ::-webkit-scrollbar-track {
+  background: var(--secondary-bg);
+}
+
+html[class~="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--tertiary-bg);
+  border-radius: 3px;
+}
+
+html[class~="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-color);
+}
+
+/* Selection styling */
+html[class~="dark"] ::selection {
+  background: rgba(139, 92, 246, 0.3);
+  color: var(--primary-text);
+}
+
+/* Focus styles */
+html[class~="dark"] *:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+/* Button styling */
+html[class~="dark"] button {
+  background-color: var(--tertiary-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--primary-text) !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+
+html[class~="dark"] button:hover {
+  background-color: var(--accent-color) !important;
+  border-color: var(--accent-color) !important;
+  color: white !important;
+}

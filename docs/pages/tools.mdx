@@ -1,0 +1,83 @@
+# Available Tools
+
+The Hypermodel Docs MCP exposes the following tools for your AI coding agents:
+
+## Core Tools
+
+| Tool               | Description                                                      | Output / Result                                                      |
+|--------------------|------------------------------------------------------------------|----------------------------------------------------------------------|
+| `link`             | Link to a user or team to set your scope context                | Links your session to a specific user or team for scoped documentation access   |
+| `list-docs`        | Check what documentation is available in your current scope     | `{ "indexes": ["ampcode-com", "developer-salesforce-com"] }`         |
+| `search-docs`      | Search documentation for answers in your current scope          | Returns ranked results with URLs, titles, snippets, and relevance scores |
+| `index`            | Add a new documentation source if not already present            | Creates searchable index from the documentation site                  |
+| `index-status`     | Check detailed status and progress of indexing jobs             | Real-time progress, duration, error details for indexing workflows   |
+| `list-indexing-jobs` | List recent indexing jobs for your current scope              | History of indexing jobs with status, progress, and timing info      |
+
+## Scope and Access Management
+
+**Scope Types**
+- `user` (default): Personal documentation access
+- `team`: Shared team documentation access
+
+**Linking Workflow**
+1. Link to a user: `link` tool with user identifier and scope='user'
+2. Link to a team: `link` tool with team identifier and scope='team' 
+3. Once linked, all `list-docs`, `search-docs`, and `index` operations work within that scope
+4. Each user has access to docs based on their permissions and scope context
+
+## Tool Details
+
+### `link`
+Set your scope context by linking your session to a specific user or team.
+
+**Parameters:**
+- `identifier` (string, required): User ID or team ID to link to
+- `scope` (string, optional): Scope type - 'user' or 'team' (default: 'user')
+
+**Notes:**
+- Links your current session to the specified user or team
+- The scope parameter determines whether you're linking to a user ('user') or team ('team')
+- All subsequent operations will be scoped to this user or team context
+
+### `list-docs`
+List all available documentation indexes in your current scope.
+
+**Parameters:** None
+
+**Returns:** Array of available documentation indexes
+
+### `search-docs`
+Search through indexed documentation using semantic search.
+
+**Parameters:**
+- `index` (string, required): The documentation index to search
+- `query` (string, required): The search query  
+- `topK` (number, optional): Number of results to return (default: 10)
+
+**Returns:** Ranked search results with URLs, titles, content snippets, and relevance scores
+
+### `index`
+Index documentation from a public URL.
+
+**Parameters:**
+- `url` (string, required): The URL to index documentation from
+- `shareWith` (array, optional): List of user/team IDs to share with
+- `accessLevel` (string, optional): Access level to grant ('read', 'write', 'admin')
+
+**Returns:** Indexing job details and workflow ID
+
+### `index-status`
+Check the status of a documentation indexing job.
+
+**Parameters:**
+- `workflowId` (string, required): The workflow ID of the indexing job
+
+**Returns:** Real-time progress, duration, and error details
+
+### `list-indexing-jobs`
+List recent indexing jobs for your current scope.
+
+**Parameters:**
+- `limit` (number, optional): Number of jobs to return (max 50, default 10)
+
+**Returns:** History of indexing jobs with status, progress, and timing information

@@ -1,0 +1,61 @@
+# Quick Start
+
+Get started with Hypermodel Docs MCP in your favorite AI coding assistant.
+
+## Auto-install in one command
+
+The easiest way to get started is using our CLI tool that automatically configures the MCP server for your IDE:
+
+### Cursor
+
+```sh
+$ npx -y -p @hypermodel/cli add-docs cursor
+```
+
+### Claude Code
+
+```sh
+$ npx -y -p @hypermodel/cli add-docs claude
+```
+
+### Amp Code
+
+```sh
+$ npx -y -p @hypermodel/cli add-docs amp
+```
+
+
+## Don't see your IDE?
+
+- **Request support** by opening a GitHub issue: [Request support for another IDE](https://github.com/hypermodel-labs/docs/issues/new?title=Support%20for%20IDE:%20Your%20IDE%20Name&body=Please%20add%20support%20for%20%60Your%20IDE%20Name%60.%0A%0AHelpful%20details%20to%20include:%0A-%20IDE%20version:%20%0A-%20OS:%20%0A-%20Relevant%20links%20or%20docs:%20)
+- Or go to the issues page: `https://github.com/hypermodel-labs/docs/issues`
+
+## Usage
+
+Once configured, you can use natural language with your AI assistant:
+
+### Common Usage Patterns
+
+**Examples**:
+
+1. `can you call search the docs on how to use "contact" objects ?`
+2. `Explain amp.tools.stopTimeout and its default in the docs of ampcode. use docs tool`
+
+### Quick Start Flow
+
+1. **Link to your scope** (optional): Use `link` tool to associate with a user or team. Default scope is 'user'.
+2. **Check available docs**: Use `list-docs` to see what documentation is available in your current scope.
+3. **Search documentation**: Use `search-docs` with the index name, your query, and optional result count.
+4. **Create new indices** (if needed): Use `index` tool to index a new documentation source if not already present.
+
+> Tip: Use the base documentation URL (https://supabase.com/docs) instead of an inner link (https://supabase.com/docs/guides/functions/dependencies)
+
+## Tips for Best Results
+
+- Use natural language queries with the terms `search` `docs` anywhere in your prompt for the MCP tool to be used
+- Start with broader queries, then narrow down based on results
+- Results include relevance scores to help identify the most useful content
+
+## Next Steps
+
+- [Available Tools](./tools) - Learn about all available MCP tools
