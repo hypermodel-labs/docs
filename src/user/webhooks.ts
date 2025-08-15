@@ -1,6 +1,6 @@
 import { Client as PgClient } from 'pg';
 import { WorkOSWebhookEvent, WorkOSUser } from './types';
-import { createUser, getUserByWorkosId, updateUser, softDeleteUser } from './database';
+import { createUser, getUserByWorkosId, updateUser, softDeleteUser, createTeam, addUserToTeam } from './database';
 
 export class WorkOSWebhookHandler {
   async handleWebhook(event: WorkOSWebhookEvent): Promise<void> {
@@ -55,14 +55,31 @@ export class WorkOSWebhookHandler {
 
     const createdUser = await createUser(client, userData);
     console.warn(`Created user: ${createdUser.id} (WorkOS: ${user.id})`);
+
+    // Create a team for the new user
+    const userName = user.first_name || user.email.split('@')[0];
+    const teamName = `${userName}'s team`;
+
+    const teamData = {
+      name: teamName,
+      description: `Personal team for ${userName}`,
+    };
+
+    const createdTeam = await createTeam(client, teamData);
+    console.warn(`Created team: ${createdTeam.id} (${teamName})`);
+
+    // Assign admin role to the user for their team
+    await addUserToTeam(client, createdTeam.id, createdUser.id, 'admin');
+    console.warn(`Assigned admin role to user ${createdUser.id} for team ${createdTeam.id}`);
   }
 
   private async handleUserUpdated(client: PgClient, user: WorkOSUser): Promise<void> {
     const existingUser = await getUserByWorkosId(client, user.id);
 
     if (!existingUser) {
-      console.warn(`User ${user.id} not found, creating new user`);
-      await this.handleUserCreated(client, user);
+      console.warn(
+        `Warning: Update attempted on non-existing or deleted user ${user.id}. Skipping update.`
+      );
       return;
     }
 
