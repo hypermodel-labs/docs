@@ -32,7 +32,7 @@
     "description": "MCP server for enhanced documentation for AI coding agents",
     "dependencies": {
         "@workos-inc/node": "^7.63.0",
-        "@modelcontextprotocol/sdk": "^1.6.1",
+        "@modelcontextprotocol/sdk": "^1.17.3",
         "@temporalio/client": "^1.12.1",
         "@temporalio/worker": "^1.12.1",
         "@temporalio/workflow": "^1.12.1",
