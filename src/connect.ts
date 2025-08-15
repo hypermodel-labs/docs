@@ -4,6 +4,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import express, { Request, Response, NextFunction } from 'express';
 import { detect } from 'detect-port';
 import type { OAuthModule } from './oauth/oauth';
+import type { UserModule } from './user/user';
 
 /**
  * Similar to https://github.com/modelcontextprotocol/typescript-sdk/pull/197/files
@@ -46,7 +47,7 @@ const DEFAULT_PORT = 3001;
 export async function connectServer(
   server: McpServer,
   useStdioTransport: boolean,
-  opts?: { oauth?: OAuthModule }
+  opts?: { oauth?: OAuthModule; user?: UserModule }
 ): Promise<express.Application | undefined> {
   if (useStdioTransport) {
     console.log('Connecting to MCP server over stdio');
@@ -68,6 +69,11 @@ export async function connectServer(
   // Install OAuth endpoints if provided
   if (opts?.oauth) {
     opts.oauth.install(app);
+  }
+
+  // Install User endpoints if provided
+  if (opts?.user) {
+    opts.user.install(app);
   }
 
   const bearerMiddleware: (req: Request, res: Response, next: NextFunction) => void =
@@ -93,7 +99,7 @@ export async function connectServer(
   app.post('/messages', bearerMiddleware, async (req: Request, res: Response) => {
     const connectionId = req.query.sessionId as string;
 
-    console.log('Connection ID', connectionId);
+    console.warn('Connection ID', connectionId);
     if (!connectionId) {
       res.status(400).json({ error: 'Missing connection ID param' });
       return;
