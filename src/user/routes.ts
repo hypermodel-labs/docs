@@ -4,7 +4,7 @@ import { WorkOSWebhookEvent } from './types.js';
 import { WorkOS } from '@workos-inc/node';
 
 const webhookHandler = new WorkOSWebhookHandler();
-const workos = new WorkOS(process.env.WORKOS_WEBHOOK_SECRET);
+const workos = new WorkOS(process.env.WORKOS_CLIENT_SECRET);
 
 export async function handleWorkOSWebhook(req: Request, res: Response): Promise<void> {
   try {
