@@ -52,7 +52,8 @@ export function createDocsTool(server: McpServer) {
         .default('user')
         .describe('Scope type: user or team'),
     },
-    async ({ identifier, scope }) => {
+    async ({ identifier, scope }, { authInfo }) => {
+      console.warn('[authInfo]', authInfo);
       const connectionString = process.env.POSTGRES_CONNECTION_STRING;
       if (!connectionString) {
         return { content: [{ type: 'text', text: 'Error: POSTGRES_CONNECTION_STRING not set' }] };
