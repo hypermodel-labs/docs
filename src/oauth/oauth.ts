@@ -245,7 +245,7 @@ export function createOAuthModule(options?: { ssePath?: string }): OAuthModule {
     }
     const token = header.slice(7).trim();
     const rec = accessTokens.get(token);
-    console.warn('[verifyBearer][rec]', rec);
+    console.warn('[verifyBearer][rec]', rec, token, header);
     if (!rec || (rec.expiresAt && Date.now() > rec.expiresAt)) {
       const metaUrl = `${baseUrlFor(req)}/.well-known/oauth-protected-resource`;
       res.setHeader('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${metaUrl}"`);
