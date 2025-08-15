@@ -16,8 +16,8 @@ export type OAuthModule = {
   verifyBearer: (req: Request, res: Response, next: NextFunction) => void;
 };
 
-export function createOAuthModule(options?: { ssePath?: string }): OAuthModule {
-  const ssePath = options?.ssePath ?? '/sse';
+export function createOAuthModule(options?: { mcpPath?: string }): OAuthModule {
+  const mcpPath = options?.mcpPath ?? '/mcp';
 
   // In-memory stores for demo purposes only
   const authorizationCodes = new Map<string, { oauth: OAuthRequestInfo; expiresAt: number }>();
@@ -54,7 +54,7 @@ export function createOAuthModule(options?: { ssePath?: string }): OAuthModule {
     app.get('/.well-known/oauth-protected-resource', (req: Request, res: Response) => {
       const baseUrl = baseUrlFor(req);
       res.json({
-        resource: `${baseUrl}${ssePath}`,
+        resource: `${baseUrl}${mcpPath}`,
         authorization_servers: [baseUrl],
       });
     });
@@ -245,13 +245,19 @@ export function createOAuthModule(options?: { ssePath?: string }): OAuthModule {
     }
     const token = header.slice(7).trim();
     const rec = accessTokens.get(token);
-    console.warn('[verifyBearer][rec]', rec, token, header);
-    if (!rec || (rec.expiresAt && Date.now() > rec.expiresAt)) {
+    if (!rec) {
       const metaUrl = `${baseUrlFor(req)}/.well-known/oauth-protected-resource`;
       res.setHeader('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${metaUrl}"`);
       return res
         .status(401)
-        .json({ error: 'invalid_token', error_description: 'Invalid or expired token' });
+        .json({ error: 'invalid_token', error_description: 'Token not found - please re-authenticate' });
+    }
+    if (rec.expiresAt && Date.now() > rec.expiresAt) {
+      const metaUrl = `${baseUrlFor(req)}/.well-known/oauth-protected-resource`;
+      res.setHeader('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${metaUrl}"`);
+      return res
+        .status(401)
+        .json({ error: 'invalid_token', error_description: 'Expired token' });
     }
     return next();
   }

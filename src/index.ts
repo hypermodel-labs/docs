@@ -13,7 +13,7 @@ const useStdioTransport =
 async function main(): Promise<express.Application | undefined> {
   const server = initialise() as McpServer;
   createDocsTool(server);
-  const oauth = createOAuthModule({ ssePath: '/sse' });
+  const oauth = createOAuthModule({ mcpPath: '/mcp' });
   const user = createUserModule();
   const app = connectServer(server, useStdioTransport, { oauth, user });
   return app;

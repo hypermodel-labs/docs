@@ -1,6 +1,13 @@
 import { Client as PgClient } from 'pg';
 import { WorkOSWebhookEvent, WorkOSUser } from './types';
-import { createUser, getUserByWorkosId, updateUser, softDeleteUser, createTeam, addUserToTeam } from './database';
+import {
+  createUser,
+  getUserByWorkosId,
+  updateUser,
+  softDeleteUser,
+  createTeam,
+  addUserToTeam,
+} from './database';
 
 export class WorkOSWebhookHandler {
   async handleWebhook(event: WorkOSWebhookEvent): Promise<void> {

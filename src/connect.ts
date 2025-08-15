@@ -1,8 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express, { Request, Response, NextFunction } from 'express';
 import { detect } from 'detect-port';
+import { randomUUID } from 'crypto';
 import type { OAuthModule } from './oauth/oauth';
 import type { UserModule } from './user/user';
 
@@ -10,22 +11,18 @@ import type { UserModule } from './user/user';
  * Similar to https://github.com/modelcontextprotocol/typescript-sdk/pull/197/files
  */
 class TransportManager {
-  private transports: Map<string, SSEServerTransport>;
+  private transports: Map<string, StreamableHTTPServerTransport>;
 
   constructor() {
     this.transports = new Map();
   }
 
-  addTransport(transport: SSEServerTransport, res: Response): string {
+  addTransport(transport: StreamableHTTPServerTransport): string {
     const sessionId = transport.sessionId;
-    this.transports.set(sessionId, transport);
-
-    // Set up cleanup when response ends
-    res.on('close', () => {
-      this.removeTransport(sessionId);
-    });
-
-    return sessionId;
+    if (sessionId) {
+      this.transports.set(sessionId, transport);
+    }
+    return sessionId || 'default';
   }
 
   removeTransport(sessionId: string) {
@@ -34,11 +31,11 @@ class TransportManager {
     }
   }
 
-  getTransport(sessionId: string): SSEServerTransport | undefined {
+  getTransport(sessionId: string): StreamableHTTPServerTransport | undefined {
     return this.transports.get(sessionId);
   }
 
-  getAllTransports(): SSEServerTransport[] {
+  getAllTransports(): StreamableHTTPServerTransport[] {
     return Array.from(this.transports.values());
   }
 }
@@ -50,7 +47,7 @@ export async function connectServer(
   opts?: { oauth?: OAuthModule; user?: UserModule }
 ): Promise<express.Application | undefined> {
   if (useStdioTransport) {
-    console.log('Connecting to MCP server over stdio');
+    console.error('Connecting to MCP server over stdio');
     const transport = new StdioServerTransport();
     await server.connect(transport);
     return;
@@ -62,7 +59,76 @@ export async function connectServer(
   const port = await detect(DEFAULT_PORT);
   const transportManager = new TransportManager();
 
-  // Increase JSON payload limit to handle larger messages
+  // Create a transport for HTTP streaming
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+    onsessioninitialized: (sessionId: string) => {
+      console.error(`HTTP streaming session initialized: ${sessionId}`);
+      transportManager.addTransport(transport);
+    },
+    onsessionclosed: (sessionId: string) => {
+      console.error(`HTTP streaming session closed: ${sessionId}`);
+      transportManager.removeTransport(sessionId);
+    },
+  });
+
+  // Connect the server to the transport
+  await server.connect(transport);
+
+  // REGISTER MCP ENDPOINT FIRST - before any middleware that might consume the stream
+  app.all('/mcp', async (req: Request, res: Response) => {
+    try {
+      // Bearer authentication without consuming the stream
+      if (opts?.oauth) {
+        const header = req.get('authorization');
+        if (!header || !header.toLowerCase().startsWith('bearer ')) {
+          const baseUrl = `${req.protocol}://${req.get('host')}`;
+          const metaUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+          res.setHeader('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${metaUrl}"`);
+          return res.status(401).json({
+            error: 'invalid_token',
+            error_description: 'Missing Authorization header',
+          });
+        }
+
+        const token = header.slice(7).trim();
+
+        // Use OAuth module's internal token verification
+        const oauthModule = opts.oauth as any;
+        const isValidToken = await new Promise<boolean>(resolve => {
+          // Create minimal req/res objects for verification
+          const mockReq = { get: (name: string) => req.get(name) } as Request;
+          const mockRes = {
+            status: () => ({ json: () => resolve(false) }),
+            setHeader: () => mockRes,
+          } as any as Response;
+          const mockNext = () => resolve(true);
+
+          oauthModule.verifyBearer(mockReq, mockRes, mockNext);
+        });
+
+        if (!isValidToken) {
+          const baseUrl = `${req.protocol}://${req.get('host')}`;
+          const metaUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+          res.setHeader('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${metaUrl}"`);
+          return res.status(401).json({
+            error: 'invalid_token',
+            error_description: 'Invalid or expired token',
+          });
+        }
+      }
+
+      // Handle the MCP request with the transport
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      console.error('Error handling MCP request:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to handle MCP request' });
+      }
+    }
+  });
+
+  // Now add other middleware AFTER the MCP endpoint is registered
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: false }));
 
@@ -76,60 +142,13 @@ export async function connectServer(
     opts.user.install(app);
   }
 
-  const bearerMiddleware: (req: Request, res: Response, next: NextFunction) => void =
-    opts?.oauth?.verifyBearer ?? ((req, _res, next) => next());
-
-  app.get('/sse', bearerMiddleware, async (req: Request, res: Response) => {
-    try {
-      // Set headers for SSE
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-
-      const transport = new SSEServerTransport('/messages', res);
-      transportManager.addTransport(transport, res);
-
-      await server.connect(transport);
-    } catch (error) {
-      console.error('Error establishing SSE connection:', error);
-      res.status(500).json({ error: 'Failed to establish SSE connection' });
-    }
-  });
-
-  app.post('/messages', bearerMiddleware, async (req: Request, res: Response) => {
-    const connectionId = req.query.sessionId as string;
-
-    console.warn('Connection ID', connectionId);
-    if (!connectionId) {
-      res.status(400).json({ error: 'Missing connection ID param' });
-      return;
-    }
-
-    const transport = transportManager.getTransport(connectionId);
-
-    if (transport) {
-      try {
-        await transport.handlePostMessage(req, res, req.body);
-      } catch (error) {
-        console.error('Error handling POST message for connectionId:', connectionId, error);
-
-        // If there's a critical error, clean up the transport
-        if (error instanceof Error && error.message.includes('connection closed')) {
-          transportManager.removeTransport(connectionId);
-        }
-      }
-    } else {
-      res.status(404).json({ error: 'Connection not found' });
-    }
-  });
-
   app.listen(port, () => {
     if (port !== DEFAULT_PORT) {
       console.error(
-        `Port ${DEFAULT_PORT} is already in use. MCP Server running on SSE at http://localhost:${port}`
+        `Port ${DEFAULT_PORT} is already in use. MCP Server running on HTTP streaming at http://localhost:${port}`
       );
     } else {
-      console.error(`MCP Server running on SSE at http://localhost:${port}`);
+      console.error(`MCP Server running on HTTP streaming at http://localhost:${port}`);
     }
   });
 
