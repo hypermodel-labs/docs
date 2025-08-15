@@ -90,14 +90,3 @@ export class WorkOSWebhookHandler {
     console.warn(`Soft deleted user: ${deletedUser?.id} (WorkOS: ${user.id})`);
   }
 }
-
-export async function verifyWorkOSWebhook(
-  payload: string,
-  signature: string,
-  secret: string
-): Promise<boolean> {
-  const crypto = await import('crypto');
-  const expectedSignature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-
-  return signature === `sha256=${expectedSignature}`;
-}

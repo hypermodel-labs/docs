@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
-import { WorkOSWebhookHandler, verifyWorkOSWebhook } from './webhooks.js';
+import { WorkOSWebhookHandler } from './webhooks.js';
 import { WorkOSWebhookEvent } from './types.js';
+import { WorkOS } from '@workos-inc/node';
 
 const webhookHandler = new WorkOSWebhookHandler();
+const workos = new WorkOS(process.env.WORKOS_WEBHOOK_SECRET);
 
 export async function handleWorkOSWebhook(req: Request, res: Response): Promise<void> {
   try {
@@ -15,25 +17,29 @@ export async function handleWorkOSWebhook(req: Request, res: Response): Promise<
     }
 
     const payload = JSON.stringify(req.body);
-    const isValidSignature = await verifyWorkOSWebhook(payload, signature, webhookSecret);
 
-    if (!isValidSignature) {
-      res.status(401).json({ error: 'Invalid webhook signature' });
+    try {
+      const event = await workos.webhooks.constructEvent({
+        payload,
+        sigHeader: signature,
+        secret: webhookSecret,
+      });
+
+      // Validate event structure
+      if (!event.id || !event.event || !event.data) {
+        res.status(400).json({ error: 'Invalid webhook payload structure' });
+        return;
+      }
+
+      // Process the webhook event
+      await webhookHandler.handleWebhook(event as unknown as WorkOSWebhookEvent);
+
+      res.status(200).json({ success: true, processed: event.id });
+    } catch (verificationError) {
+      console.error('Webhook signature verification failed:', verificationError);
+      res.status(400).json({ error: 'Webhook signature verification failed' });
       return;
     }
-
-    const event: WorkOSWebhookEvent = req.body;
-
-    // Validate event structure
-    if (!event.id || !event.event || !event.data) {
-      res.status(400).json({ error: 'Invalid webhook payload structure' });
-      return;
-    }
-
-    // Process the webhook event
-    await webhookHandler.handleWebhook(event);
-
-    res.status(200).json({ success: true, processed: event.id });
   } catch (error) {
     console.error('Webhook processing error:', error);
     res.status(500).json({ error: 'Internal server error' });
