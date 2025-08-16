@@ -15,7 +15,7 @@ const Hero = () => {
             <br />
             documentation on external APIs, <em>always</em>.
           </p>
-          <div className="hero-command">npx @hypermodel/cli add-docs claude</div>
+          <div className="hero-command">npx -y @hypermodel/cli@latest add-docs claude</div>
         </div>
 
         <div className="terminal-demo">
