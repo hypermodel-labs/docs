@@ -26,13 +26,14 @@ WORKDIR /app
 
 # Copy built artifacts and necessary files
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/pnpm-lock.yaml ./
 
 # Install production dependencies only
 RUN corepack enable && \
     corepack prepare pnpm@8.9.0 --activate && \
-    pnpm install --prod --ignore-scripts
+    pnpm install --prod
 
 # Expose the port the app runs on (connect.ts uses 3001 by default)
 EXPOSE 3001
