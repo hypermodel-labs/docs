@@ -48,6 +48,7 @@ export default defineConfig(({ command }) => {
           '@temporalio/client',
           '@temporalio/worker',
           '@temporalio/workflow',
+          'pdf-parse',
         ],
       },
       sourcemap: true,
