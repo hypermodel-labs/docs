@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client as PgClient } from 'pg';
 import OpenAI from 'openai';
 import { createTemporalClient } from './temporal/client';
-import { indexDocumentationWorkflow } from './temporal/workflows';
+import { indexDocumentationWorkflow, indexPdfWorkflow } from './temporal/workflows';
 import {
   getUserContext,
   linkSession,
@@ -229,9 +229,10 @@ export function createDocsTool(server: McpServer) {
   // Create a tool to index documentation from a public URL using Temporal
   server.tool(
     'index',
-    'Index documentation from a public URL. Crawls the site and embeds content into a vector DB using Temporal Cloud for background processing. ALWAYS USE THE LIST-INDEXES TOOL TO CHECK IF AN INDEX WITH THE NAME ALREADY EXISTS.',
+    'Index documentation from a public URL. Crawls the site or PDF URL and embeds content into a vector DB using Temporal Cloud for background processing. ALWAYS USE THE LIST-INDEXES TOOL TO CHECK IF AN INDEX WITH THE NAME ALREADY EXISTS.',
     {
-      url: z.string().describe('The URL to index documentation from'),
+      url: z.string().describe('The URL to index documentation or PDF from'),
+      type: z.enum(['url', 'pdf']).describe('The type of content to index'),
       shareWith: z
         .array(z.string())
         .optional()
@@ -242,7 +243,7 @@ export function createDocsTool(server: McpServer) {
         .default('read')
         .describe('Access level to grant'),
     },
-    async ({ url, shareWith, accessLevel }) => {
+    async ({ url, type, shareWith, accessLevel }) => {
       const connectionString = process.env.POSTGRES_CONNECTION_STRING;
       if (!connectionString) {
         return { content: [{ type: 'text', text: 'Error: POSTGRES_CONNECTION_STRING not set' }] };
@@ -268,13 +269,16 @@ export function createDocsTool(server: McpServer) {
 
         // Start the indexing workflow
         const temporalClient = await createTemporalClient();
-        const handle = await temporalClient.workflow.start(indexDocumentationWorkflow, {
-          args: [url, workflowId],
-          taskQueue: 'docs-indexing',
-          workflowId,
-          workflowRunTimeout: '1 hour',
-          workflowExecutionTimeout: '1 hour',
-        });
+        const handle = await temporalClient.workflow.start(
+          type === 'url' ? indexDocumentationWorkflow : indexPdfWorkflow,
+          {
+            args: [url, workflowId],
+            taskQueue: 'docs-indexing',
+            workflowId,
+            workflowRunTimeout: '1 hour',
+            workflowExecutionTimeout: '1 hour',
+          }
+        );
 
         // Grant access to the user who initiated the indexing
         const grantedBy = context.userId || context.teamId || 'system';

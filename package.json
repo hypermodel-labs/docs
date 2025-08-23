@@ -31,11 +31,11 @@
     "author": "Hypermodel Labs",
     "description": "MCP server for enhanced documentation for AI coding agents",
     "dependencies": {
-        "@workos-inc/node": "^7.63.0",
         "@modelcontextprotocol/sdk": "^1.17.3",
         "@temporalio/client": "^1.12.1",
         "@temporalio/worker": "^1.12.1",
         "@temporalio/workflow": "^1.12.1",
+        "@workos-inc/node": "^7.63.0",
         "axios": "^1.8.1",
         "build": "^0.1.4",
         "cheerio": "^1.0.0-rc.12",
@@ -44,6 +44,7 @@
         "dotenv": "^16.4.7",
         "express": "^4.21.2",
         "openai": "^4.77.0",
+        "pdf-parse": "^1.1.1",
         "pg": "^8.12.0",
         "temporalio": "^1.9.3",
         "zod": "^3.24.2"
@@ -57,6 +58,7 @@
         "@types/express": "^5.0.1",
         "@types/minimist": "^1.2.5",
         "@types/node": "^22.13.5",
+        "@types/pdf-parse": "^1.1.5",
         "@types/pg": "^8.11.10",
         "@types/react": "^18.2.64",
         "@types/react-dom": "^18.2.21",

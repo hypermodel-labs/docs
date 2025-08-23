@@ -1,7 +1,7 @@
 import { proxyActivities } from '@temporalio/workflow';
 import type * as activities from './activities';
 
-const { indexDocumentationActivity } = proxyActivities<typeof activities>({
+const { indexDocumentationActivity, indexPdfActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '1 hour',
   retry: {
     maximumAttempts: 3,
@@ -14,4 +14,11 @@ export async function indexDocumentationWorkflow(
   jobId: string
 ): Promise<{ indexName: string; pagesIndexed: number; totalChunks: number }> {
   return await indexDocumentationActivity(startUrl, jobId);
+}
+
+export async function indexPdfWorkflow(
+  pdfUrl: string,
+  jobId: string
+): Promise<{ indexName: string; pagesIndexed: number; totalChunks: number }> {
+  return await indexPdfActivity(pdfUrl, jobId);
 }

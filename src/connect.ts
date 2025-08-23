@@ -70,7 +70,7 @@ class SSETransportManager {
   }
 }
 
-const DEFAULT_PORT = 3001;
+const DEFAULT_PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 export async function connectServer(
   server: McpServer,
   useStdioTransport: boolean,

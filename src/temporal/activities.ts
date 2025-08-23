@@ -24,6 +24,13 @@ type CrawledPage = {
   text: string;
 };
 
+type PdfParseResult = {
+  text?: string;
+  info?: { Title?: string };
+  numpages?: number;
+};
+type PdfParseFunction = (data: Buffer) => Promise<PdfParseResult>;
+
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 const DEFAULT_VECTOR_DIMENSION = 1536; // for text-embedding-3-small
 const DEFAULT_CRAWLER_UA = 'docs-mcp-crawler/1.0 (+https://hypermodel.dev) axios';
@@ -546,6 +553,155 @@ export async function indexDocumentationActivity(
       });
     } catch (statusError) {
       console.warn('Failed to update job status to failed:', statusError);
+    }
+    throw error;
+  } finally {
+    await client.end();
+  }
+}
+
+export async function indexPdfActivity(
+  pdfUrl: string,
+  jobId: string
+): Promise<{ indexName: string; pagesIndexed: number; totalChunks: number }> {
+  const indexName = deriveIndexNameFromUrl(pdfUrl);
+  const connectionString = process.env.POSTGRES_CONNECTION_STRING;
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!connectionString) throw new Error('POSTGRES_CONNECTION_STRING is not set');
+  if (!openaiApiKey) throw new Error('OPENAI_API_KEY is not set');
+
+  const client = new PgClient({ connectionString });
+  const openai = new OpenAI({ apiKey: openaiApiKey });
+  await client.connect();
+
+  // For PDFs, we treat the entire PDF as one "page" for counters
+  let pagesDiscovered = 1;
+  let pagesProcessed = 0;
+  let pagesIndexed = 0;
+  let totalChunks = 0;
+
+  try {
+    try {
+      await updateIndexingJobStatus(client, jobId, 'running');
+    } catch (error) {
+      console.warn('Failed to update job status to running (pdf):', error);
+    }
+
+    await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
+
+    const timeoutMs = Number(process.env.DOCS_TIMEOUT_MS || '') || 25000;
+    const userAgent = process.env.DOCS_USER_AGENT || DEFAULT_CRAWLER_UA;
+
+    // Fetch PDF bytes
+    const res = await axios.get(pdfUrl, {
+      responseType: 'arraybuffer',
+      timeout: timeoutMs,
+      headers: {
+        'User-Agent': userAgent,
+        Accept: 'application/pdf,application/octet-stream;q=0.9,*/*;q=0.8',
+      },
+      validateStatus: (status: number) => status >= 200 && status < 400,
+      maxRedirects: 5,
+    });
+    const pdfBuffer: Buffer = Buffer.from(res.data);
+
+    // Lazy import to avoid ESM/CJS issues and extra bundle weight
+    const pdfParseImport = (await import('pdf-parse')) as unknown as
+      | { default?: PdfParseFunction }
+      | PdfParseFunction;
+    const pdfParse: PdfParseFunction =
+      typeof pdfParseImport === 'function'
+        ? (pdfParseImport as PdfParseFunction)
+        : ((pdfParseImport as { default?: PdfParseFunction }).default as PdfParseFunction);
+    const parsed: PdfParseResult = await pdfParse(pdfBuffer);
+
+    const rawTitle: string | undefined = parsed?.info?.Title;
+    const title = (rawTitle && String(rawTitle).trim()) || pdfUrl.split('/').pop() || pdfUrl;
+    const fullText: string = String(parsed?.text || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const batchSize = 16;
+    let pendingChunks: { url: string; title: string; content: string }[] = [];
+
+    const flush = async () => {
+      if (pendingChunks.length === 0) return;
+      const contents = pendingChunks.map(c => c.content);
+      const embeddings = await embedBatch(openai, contents);
+      for (let i = 0; i < pendingChunks.length; i += 1) {
+        const { url, title, content } = pendingChunks[i];
+        const embedding = embeddings[i];
+        const metadata = {
+          source: url,
+          type: 'pdf',
+          title,
+          size: content.length,
+          pageCount: Number(parsed?.numpages || 0),
+        } as const;
+        await upsertDocument(
+          client,
+          indexName,
+          url + '#' + crypto.createHash('md5').update(content).digest('hex'),
+          title,
+          content,
+          embedding,
+          metadata
+        );
+        totalChunks++;
+      }
+      pendingChunks = [];
+
+      try {
+        await updateIndexingJobStatus(client, jobId, 'running', {
+          pagesDiscovered,
+          pagesProcessed,
+          pagesIndexed,
+          totalChunks,
+        });
+      } catch (error) {
+        console.warn('Failed to update job progress (pdf):', error);
+      }
+    };
+
+    if (fullText.length > 0) {
+      const chunks = chunkText(fullText);
+      if (chunks.length > 0) {
+        pagesProcessed = 1;
+        pagesIndexed = 1;
+        for (const chunk of chunks) {
+          pendingChunks.push({ url: pdfUrl, title, content: chunk });
+          if (pendingChunks.length >= batchSize) {
+            await flush();
+          }
+        }
+        await flush();
+      }
+    }
+
+    try {
+      await updateIndexingJobStatus(client, jobId, 'completed', {
+        pagesDiscovered,
+        pagesProcessed,
+        pagesIndexed,
+        totalChunks,
+      });
+    } catch (error) {
+      console.warn('Failed to update job status to completed (pdf):', error);
+    }
+
+    return { indexName, pagesIndexed, totalChunks };
+  } catch (error) {
+    try {
+      await updateIndexingJobStatus(client, jobId, 'failed', {
+        pagesDiscovered,
+        pagesProcessed,
+        pagesIndexed,
+        totalChunks,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorDetails: error instanceof Error ? { stack: error.stack } : { error: String(error) },
+      });
+    } catch (statusError) {
+      console.warn('Failed to update job status to failed (pdf):', statusError);
     }
     throw error;
   } finally {
