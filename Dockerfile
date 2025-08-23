@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
-
+COPY scripts/patch-pdf-parse.js ./scripts/patch-pdf-parse.js
 # Install dependencies
 RUN pnpm install 
 
