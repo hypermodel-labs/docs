@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { Client as PgClient } from 'pg';
 import OpenAI from 'openai';
 import os from 'node:os';
+import pdfParse from 'pdf-parse';
 import { updateIndexingJobStatus } from '../scope';
 
 type CrawlOptions = {
@@ -29,7 +30,6 @@ type PdfParseResult = {
   info?: { Title?: string };
   numpages?: number;
 };
-type PdfParseFunction = (data: Buffer) => Promise<PdfParseResult>;
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 const DEFAULT_VECTOR_DIMENSION = 1536; // for text-embedding-3-small
@@ -605,14 +605,6 @@ export async function indexPdfActivity(
     });
     const pdfBuffer: Buffer = Buffer.from(res.data);
 
-    // Lazy import to avoid ESM/CJS issues and extra bundle weight
-    const pdfParseImport = (await import('pdf-parse')) as unknown as
-      | { default?: PdfParseFunction }
-      | PdfParseFunction;
-    const pdfParse: PdfParseFunction =
-      typeof pdfParseImport === 'function'
-        ? (pdfParseImport as PdfParseFunction)
-        : ((pdfParseImport as { default?: PdfParseFunction }).default as PdfParseFunction);
     const parsed: PdfParseResult = await pdfParse(pdfBuffer);
 
     const rawTitle: string | undefined = parsed?.info?.Title;
