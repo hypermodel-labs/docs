@@ -36,6 +36,190 @@ const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 const DEFAULT_VECTOR_DIMENSION = 1536; // for text-embedding-3-small
 const DEFAULT_CRAWLER_UA = 'docs-mcp-crawler/1.0 (+https://hypermodel.dev) axios';
 
+// Simple token estimator: ~4 chars per token as a heuristic for English text
+function estimateTokens(text: string): number {
+  const length = (text || '').length;
+  // Clamp to at least 1 token to avoid zeros
+  return Math.max(1, Math.ceil(length / 4));
+}
+
+function estimateTokensForTexts(texts: string[]): number {
+  let total = 0;
+  for (const t of texts) total += estimateTokens(t);
+  return total;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(retryAfter: unknown): number | undefined {
+  if (!retryAfter) return undefined;
+  try {
+    const value = String(retryAfter).trim();
+    // If numeric, it's seconds
+    const asNum = Number(value);
+    if (!Number.isNaN(asNum) && asNum >= 0) return Math.floor(asNum * 1000);
+    // Otherwise, HTTP-date
+    const date = Date.parse(value);
+    if (!Number.isNaN(date)) {
+      const diff = date - Date.now();
+      return diff > 0 ? diff : 0;
+    }
+  } catch {
+    // ignore parsing errors
+  }
+  return undefined;
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error === 'object' && error !== null) {
+    const maybeStatus = (error as { status?: unknown }).status;
+    if (typeof maybeStatus === 'number') return maybeStatus;
+    const maybeStatusCode = (error as { statusCode?: unknown }).statusCode;
+    if (typeof maybeStatusCode === 'number') return maybeStatusCode;
+    const response = (error as { response?: { status?: unknown } }).response;
+    if (response && typeof response.status === 'number') return response.status;
+  }
+  return undefined;
+}
+
+function getErrorHeaders(error: unknown): Record<string, unknown> {
+  if (typeof error === 'object' && error !== null) {
+    const asObj = error as { headers?: unknown; response?: { headers?: unknown } };
+    const headers = (asObj.headers || asObj.response?.headers) as unknown;
+    if (headers && typeof headers === 'object') return headers as Record<string, unknown>;
+  }
+  return {};
+}
+
+class EmbeddingRateLimiter {
+  private readonly requestsPerMinute: number;
+  private readonly tokensPerMinute: number;
+  private readonly tokensPerDay: number;
+  private readonly maxRetries: number;
+  private readonly initialBackoffMs: number;
+
+  private minuteWindowStart: number;
+  private minuteRequests: number;
+  private minuteTokens: number;
+
+  private dayWindowStart: number;
+  private dayTokens: number;
+
+  private tail: Promise<void> = Promise.resolve();
+
+  constructor(options: {
+    requestsPerMinute: number;
+    tokensPerMinute: number;
+    tokensPerDay: number;
+    maxRetries: number;
+    initialBackoffMs: number;
+  }) {
+    this.requestsPerMinute = options.requestsPerMinute;
+    this.tokensPerMinute = options.tokensPerMinute;
+    this.tokensPerDay = options.tokensPerDay;
+    this.maxRetries = options.maxRetries;
+    this.initialBackoffMs = options.initialBackoffMs;
+
+    const now = Date.now();
+    this.minuteWindowStart = now;
+    this.minuteRequests = 0;
+    this.minuteTokens = 0;
+
+    this.dayWindowStart = now;
+    this.dayTokens = 0;
+  }
+
+  private rollWindows(now: number) {
+    // Roll minute
+    if (now - this.minuteWindowStart >= 60_000) {
+      const windowsPassed = Math.floor((now - this.minuteWindowStart) / 60_000);
+      this.minuteWindowStart += windowsPassed * 60_000;
+      this.minuteRequests = 0;
+      this.minuteTokens = 0;
+    }
+    // Roll day
+    if (now - this.dayWindowStart >= 86_400_000) {
+      const daysPassed = Math.floor((now - this.dayWindowStart) / 86_400_000);
+      this.dayWindowStart += daysPassed * 86_400_000;
+      this.dayTokens = 0;
+    }
+  }
+
+  async acquire(cost: { requests: number; tokens: number }): Promise<void> {
+    // Serialize waits to avoid thundering herd among concurrent tasks in-process
+    this.tail = this.tail.then(async () => {
+      while (true) {
+        const now = Date.now();
+        this.rollWindows(now);
+
+        const willExceedRequests = this.minuteRequests + cost.requests > this.requestsPerMinute;
+        const willExceedMinuteTokens = this.minuteTokens + cost.tokens > this.tokensPerMinute;
+        const willExceedDayTokens = this.dayTokens + cost.tokens > this.tokensPerDay;
+
+        if (!willExceedRequests && !willExceedMinuteTokens && !willExceedDayTokens) {
+          this.minuteRequests += cost.requests;
+          this.minuteTokens += cost.tokens;
+          this.dayTokens += cost.tokens;
+          return;
+        }
+
+        // Compute next available time
+        const untilNextMinute = Math.max(0, this.minuteWindowStart + 60_000 - now);
+        const untilNextDay = Math.max(0, this.dayWindowStart + 86_400_000 - now);
+        const waitMs = willExceedDayTokens
+          ? Math.max(untilNextDay, 1000)
+          : Math.max(untilNextMinute, 100); // at least a tiny wait to avoid tight loop
+        await sleep(waitMs);
+      }
+    });
+    return this.tail;
+  }
+
+  async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    let attempt = 0;
+    let lastError: unknown;
+    while (attempt < this.maxRetries) {
+      try {
+        return await fn();
+      } catch (error: unknown) {
+        lastError = error;
+        const status: number | undefined = getErrorStatus(error);
+        const retriable = status === 429 || (typeof status === 'number' && status >= 500);
+        if (!retriable) break;
+
+        // Honor Retry-After if present
+        const headers = getErrorHeaders(error);
+        const retryAfterHeader = (headers['retry-after'] || headers['Retry-After']) as unknown;
+        const retryAfterMs = parseRetryAfter(retryAfterHeader);
+        const base = this.initialBackoffMs * Math.pow(2, attempt);
+        const jitter = Math.floor(Math.random() * 250);
+        const delay = retryAfterMs !== undefined ? retryAfterMs : base + jitter;
+        await sleep(delay);
+      }
+      attempt += 1;
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+}
+
+// Configure limiter with headroom below absolute limits to avoid 429s
+const CONFIGURED_RPM = Number(process.env.DOCS_EMBED_RPM || '') || 9000; // 90% of 10k
+const CONFIGURED_TPM = Number(process.env.DOCS_EMBED_TPM || '') || 9000000; // 90% of 10M
+const CONFIGURED_TPD = Number(process.env.DOCS_EMBED_TPD || '') || 3800000000; // 95% of 4B
+const CONFIGURED_MAX_RETRIES = Number(process.env.DOCS_EMBED_MAX_RETRIES || '') || 6;
+const CONFIGURED_INITIAL_BACKOFF_MS =
+  Number(process.env.DOCS_EMBED_INITIAL_BACKOFF_MS || '') || 500;
+
+const embeddingLimiter = new EmbeddingRateLimiter({
+  requestsPerMinute: CONFIGURED_RPM,
+  tokensPerMinute: CONFIGURED_TPM,
+  tokensPerDay: CONFIGURED_TPD,
+  maxRetries: CONFIGURED_MAX_RETRIES,
+  initialBackoffMs: CONFIGURED_INITIAL_BACKOFF_MS,
+});
+
 async function ensureVectorStore(client: PgClient, indexName: string, dimension: number) {
   const table = `docs_${indexName}`;
   const quotedTable = `"${table}"`;
@@ -265,8 +449,8 @@ async function crawlSite(
       }
       // discover links
       const $ = cheerio.load(res.data);
-      $('a[href]').each((index: number, el: any) => {
-        const href = ($(el).attr('href') || '').trim();
+      $('a[href]').each((index: number, el: unknown) => {
+        const href = ($(el as any).attr('href') || '').trim();
         if (!href) return;
         try {
           const abs = new URL(href, current);
@@ -344,7 +528,11 @@ async function embedBatch(
   model = DEFAULT_EMBEDDING_MODEL
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const response = await openai.embeddings.create({ model, input: texts });
+  const tokens = estimateTokensForTexts(texts);
+  await embeddingLimiter.acquire({ requests: 1, tokens });
+  const response = await embeddingLimiter.withRetry(() =>
+    openai.embeddings.create({ model, input: texts })
+  );
   return response.data.map((d: { embedding: number[] }) => d.embedding as unknown as number[]);
 }
 
@@ -403,7 +591,7 @@ export async function indexDocumentationActivity(
     await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
 
     // Crawl and index
-    const batchSize = 16; // chunks per embedding batch
+    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 32; // chunks per embedding batch
     let pendingChunks: { url: string; title: string; content: string }[] = [];
 
     const flush = async () => {
@@ -605,7 +793,7 @@ export async function indexPdfActivity(
       .replace(/\s+/g, ' ')
       .trim();
 
-    const batchSize = 16;
+    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 32;
     let pendingChunks: { url: string; title: string; content: string }[] = [];
 
     const flush = async () => {
