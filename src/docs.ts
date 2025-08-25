@@ -19,7 +19,7 @@ import {
   AccessLevel,
 } from './scope';
 
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
+const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
 
 async function embedBatch(
   openai: OpenAI,
