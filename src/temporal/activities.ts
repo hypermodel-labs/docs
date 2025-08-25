@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import os from 'node:os';
 import pdfParse from 'pdf-parse';
 import { updateIndexingJobStatus } from '../scope';
+import { deriveIndexNameFromUrl } from '../deriveIndexName';
 
 type CrawlOptions = {
   maxPages?: number;
@@ -34,15 +35,6 @@ type PdfParseResult = {
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 const DEFAULT_VECTOR_DIMENSION = 1536; // for text-embedding-3-small
 const DEFAULT_CRAWLER_UA = 'docs-mcp-crawler/1.0 (+https://hypermodel.dev) axios';
-
-function deriveIndexNameFromUrl(inputUrl: string): string {
-  const url = new URL(inputUrl);
-  const host = url.hostname.toLowerCase();
-  return host
-    .replace(/^www\./, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
 
 async function ensureVectorStore(client: PgClient, indexName: string, dimension: number) {
   const table = `docs_${indexName}`;

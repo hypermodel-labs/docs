@@ -14,6 +14,7 @@
         "publish": "npm publish --access public",
         "test:mcp": "npx tsx test_mcp.ts",
         "test:mcp:ci": "npm run build && npx tsx test_mcp.ts",
+        "test:unit": "npx tsx src/deriveIndexName.test.ts",
         "lint": "eslint \"src/**/*.{js,ts}\"",
         "lint:fix": "eslint \"src/**/*.{js,ts}\" --fix",
         "format": "prettier --write \"src/**/*.{js,ts,json,md}\"",

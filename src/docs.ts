@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client as PgClient } from 'pg';
 import OpenAI from 'openai';
 import { createTemporalClient } from './temporal/client';
+import { deriveIndexNameFromUrl } from './deriveIndexName';
 import { indexDocumentationWorkflow, indexPdfWorkflow } from './temporal/workflows';
 import {
   getUserContext,
@@ -19,15 +20,6 @@ import {
 } from './scope';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
-
-function deriveIndexNameFromUrl(inputUrl: string): string {
-  const url = new URL(inputUrl);
-  const host = url.hostname.toLowerCase();
-  return host
-    .replace(/^www\./, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
 
 async function embedBatch(
   openai: OpenAI,
