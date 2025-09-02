@@ -32,8 +32,8 @@ type PdfParseResult = {
   numpages?: number;
 };
 
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
-const DEFAULT_VECTOR_DIMENSION = 3072; // for text-embedding-3-large
+const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
+const DEFAULT_VECTOR_DIMENSION = 1536; // for text-embedding-3-large
 const DEFAULT_CRAWLER_UA = 'docs-mcp-crawler/1.0 (+https://hypermodel.dev) axios';
 
 // Simple token estimator: ~4 chars per token as a heuristic for English text
@@ -219,6 +219,105 @@ const embeddingLimiter = new EmbeddingRateLimiter({
   maxRetries: CONFIGURED_MAX_RETRIES,
   initialBackoffMs: CONFIGURED_INITIAL_BACKOFF_MS,
 });
+
+// Optional distributed limiter (Postgres) for multi-process coordination
+let didEnsureDistributedTable = false;
+async function ensureDistributedRateStore(client: PgClient): Promise<void> {
+  if (didEnsureDistributedTable) return;
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS docs_embed_rate_window (
+      id INT PRIMARY KEY,
+      minute_window_start TIMESTAMPTZ NOT NULL DEFAULT now(),
+      minute_requests INT NOT NULL DEFAULT 0,
+      minute_tokens BIGINT NOT NULL DEFAULT 0,
+      day_window_start TIMESTAMPTZ NOT NULL DEFAULT now(),
+      day_tokens BIGINT NOT NULL DEFAULT 0
+    )`
+  );
+  await client.query(
+    `INSERT INTO docs_embed_rate_window (id) VALUES (1)
+     ON CONFLICT (id) DO NOTHING`
+  );
+  didEnsureDistributedTable = true;
+}
+
+async function distributedAcquirePostgres(
+  client: PgClient,
+  cost: { requests: number; tokens: number }
+): Promise<void> {
+  if ((process.env.DOCS_EMBED_DISTRIBUTED || '').toLowerCase() !== 'postgres') return;
+  await ensureDistributedRateStore(client);
+
+  const lockKey = 881122; // arbitrary app-level advisory lock key
+  while (true) {
+    await client.query('SELECT pg_advisory_lock($1)', [lockKey]);
+    try {
+      const nowRes = await client.query('SELECT now() as now');
+      const now: Date = nowRes.rows[0].now;
+      const rowRes = await client.query(`SELECT * FROM docs_embed_rate_window WHERE id = 1`);
+      const row = rowRes.rows[0] || {};
+
+      const minuteWindowStart: Date = row.minute_window_start || now;
+      const dayWindowStart: Date = row.day_window_start || now;
+      let minuteRequests: number = Number(row.minute_requests || 0);
+      let minuteTokens: number = Number(row.minute_tokens || 0);
+      let dayTokens: number = Number(row.day_tokens || 0);
+
+      const minuteElapsed = now.getTime() - new Date(minuteWindowStart).getTime();
+      const dayElapsed = now.getTime() - new Date(dayWindowStart).getTime();
+
+      if (minuteElapsed >= 60_000) {
+        minuteRequests = 0;
+        minuteTokens = 0;
+      }
+      if (dayElapsed >= 86_400_000) {
+        dayTokens = 0;
+      }
+
+      const willExceedRequests = minuteRequests + cost.requests > CONFIGURED_RPM;
+      const willExceedMinuteTokens = minuteTokens + cost.tokens > CONFIGURED_TPM;
+      const willExceedDayTokens = dayTokens + cost.tokens > CONFIGURED_TPD;
+
+      if (!willExceedRequests && !willExceedMinuteTokens && !willExceedDayTokens) {
+        minuteRequests += cost.requests;
+        minuteTokens += cost.tokens;
+        dayTokens += cost.tokens;
+        const newMinuteStart = minuteElapsed >= 60_000 ? now : minuteWindowStart;
+        const newDayStart = dayElapsed >= 86_400_000 ? now : dayWindowStart;
+        await client.query(
+          `UPDATE docs_embed_rate_window
+           SET minute_window_start = $1,
+               minute_requests = $2,
+               minute_tokens = $3,
+               day_window_start = $4,
+               day_tokens = $5
+           WHERE id = 1`,
+          [newMinuteStart, minuteRequests, minuteTokens, newDayStart, dayTokens]
+        );
+        return;
+      }
+
+      const untilNextMinute = Math.max(
+        0,
+        new Date(minuteWindowStart).getTime() + 60_000 - now.getTime()
+      );
+      const untilNextDay = Math.max(
+        0,
+        new Date(dayWindowStart).getTime() + 86_400_000 - now.getTime()
+      );
+      const waitMs = willExceedDayTokens
+        ? Math.max(untilNextDay, 1000)
+        : Math.max(untilNextMinute, 100);
+      // Release lock before waiting
+      await client.query('SELECT pg_advisory_unlock($1)', [lockKey]);
+      await sleep(waitMs);
+      continue;
+    } finally {
+      // Ensure lock is released if we returned early
+      await client.query('SELECT pg_advisory_unlock($1)', [lockKey]).catch(() => {});
+    }
+  }
+}
 
 async function ensureVectorStore(client: PgClient, indexName: string, dimension: number) {
   const table = `docs_${indexName}`;
@@ -597,6 +696,10 @@ export async function indexDocumentationActivity(
     const flush = async () => {
       if (pendingChunks.length === 0) return;
       const contents = pendingChunks.map(c => c.content);
+      await distributedAcquirePostgres(client, {
+        requests: 1,
+        tokens: estimateTokensForTexts(contents),
+      });
       const embeddings = await embedBatch(openai, contents);
       for (let i = 0; i < pendingChunks.length; i += 1) {
         const { url, title, content } = pendingChunks[i];
@@ -799,6 +902,10 @@ export async function indexPdfActivity(
     const flush = async () => {
       if (pendingChunks.length === 0) return;
       const contents = pendingChunks.map(c => c.content);
+      await distributedAcquirePostgres(client, {
+        requests: 1,
+        tokens: estimateTokensForTexts(contents),
+      });
       const embeddings = await embedBatch(openai, contents);
       for (let i = 0; i < pendingChunks.length; i += 1) {
         const { url, title, content } = pendingChunks[i];
