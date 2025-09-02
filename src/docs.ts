@@ -20,6 +20,7 @@ import {
 } from './scope';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
+const DEFAULT_VECTOR_DIMENSION = 1536; // Shortened from 3072 to match pgvector limits
 
 async function embedBatch(
   openai: OpenAI,
@@ -27,7 +28,11 @@ async function embedBatch(
   model = DEFAULT_EMBEDDING_MODEL
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const response = await openai.embeddings.create({ model, input: texts });
+  const response = await openai.embeddings.create({
+    model,
+    input: texts,
+    dimensions: DEFAULT_VECTOR_DIMENSION, // Explicitly set dimensions to 1536
+  });
   return response.data.map((d: { embedding: number[] }) => d.embedding as unknown as number[]);
 }
 
