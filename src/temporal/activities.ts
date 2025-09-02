@@ -323,30 +323,30 @@ async function ensureVectorStore(client: PgClient, indexName: string, dimension:
   const table = `docs_${indexName}`;
   const quotedTable = `"${table}"`;
   await client.query('CREATE EXTENSION IF NOT EXISTS vector');
-  
-  // Check if table exists and has correct dimension
+
+  // Ensure table type matches requested vector dimension. If not, drop and recreate.
   try {
-    const result = await client.query(`
-      SELECT column_name, data_type, character_maximum_length
-      FROM information_schema.columns 
-      WHERE table_name = $1 AND column_name = 'embedding'
-    `, [table]);
-    
-    if (result.rows.length > 0) {
-      // Table exists, check if it has correct dimension by trying to create a test vector
-      try {
-        const testVector = new Array(dimension).fill(0).join(',');
-        await client.query(`SELECT '[${testVector}]'::vector`);
-      } catch (dimError) {
-        // Dimension mismatch, drop and recreate table
-        console.warn(`Dropping table ${table} due to dimension mismatch`);
+    const dimRes = await client.query(
+      `SELECT (atttypmod - 4) AS dims
+       FROM pg_attribute
+       WHERE attrelid = $1::regclass
+         AND attname = 'embedding'
+         AND NOT attisdropped`,
+      [table]
+    );
+    if (dimRes.rows.length > 0) {
+      const existingDims = Number(dimRes.rows[0]?.dims || 0);
+      if (existingDims && existingDims !== dimension) {
+        console.warn(
+          `Recreating ${table}: embedding dimension changed ${existingDims} -> ${dimension}`
+        );
         await client.query(`DROP TABLE IF EXISTS ${quotedTable} CASCADE`);
       }
     }
   } catch (error) {
-    console.warn('Error checking table dimensions:', error);
+    console.warn('Error checking existing vector dimension:', error);
   }
-  
+
   await client.query(
     `CREATE TABLE IF NOT EXISTS ${quotedTable} (
       id BIGSERIAL PRIMARY KEY,
@@ -358,17 +358,24 @@ async function ensureVectorStore(client: PgClient, indexName: string, dimension:
       created_at TIMESTAMPTZ DEFAULT now()
     )`
   );
-  // HNSW index for faster ANN search (no dimension limit)
+
+  // Prefer HNSW. Guard IVFFlat fallback for high dimensions (>2000)
   try {
     await client.query(
       `CREATE INDEX IF NOT EXISTS "${table}_embedding_idx" ON ${quotedTable} USING hnsw (embedding vector_cosine_ops)`
     );
   } catch (error) {
-    // If HNSW fails, try IVFFlat as fallback (but should work with 1536 dims)
-    console.warn('HNSW index creation failed, trying IVFFlat:', error);
-    await client.query(
-      `CREATE INDEX IF NOT EXISTS "${table}_embedding_idx" ON ${quotedTable} USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)`
-    );
+    const tooHighDim = dimension > 2000;
+    if (tooHighDim) {
+      console.warn(
+        `Skipping IVFFlat index for ${table}: dimension ${dimension} exceeds 2000. Queries will use sequential scan.`
+      );
+    } else {
+      console.warn('HNSW index creation failed, trying IVFFlat:', error);
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS "${table}_embedding_idx" ON ${quotedTable} USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)`
+      );
+    }
   }
   await client.query(`CREATE INDEX IF NOT EXISTS "${table}_url_idx" ON ${quotedTable} (url)`);
 }
