@@ -715,6 +715,10 @@ async function createEmbeddingProviderInstance(): Promise<EmbeddingProvider> {
     throw new Error(`${config.provider.toUpperCase()}_API_KEY not set`);
   }
 
+  console.warn(
+    `Initializing ${config.provider} embedding provider with model ${config.model} and ${config.dimensions} dimensions`
+  );
+
   return createEmbeddingProvider(config.provider, config.apiKey, config.model, config.dimensions);
 }
 
@@ -781,7 +785,11 @@ export async function indexDocumentationActivity(
   }
 
   try {
-    await ensureVectorStore(client, indexName, embeddingProvider.getDimensions());
+    const embeddingDimensions = embeddingProvider.getDimensions();
+    console.warn(
+      `Using embedding provider: ${embeddingProvider.getModel()} with ${embeddingDimensions} dimensions`
+    );
+    await ensureVectorStore(client, indexName, embeddingDimensions);
 
     // Crawl and index
     // Clamp batch size to a conservative default; allow env override but cap at 16
@@ -1108,7 +1116,11 @@ export async function indexPdfActivity(
       console.warn('Failed to update job status to running (pdf):', error);
     }
 
-    await ensureVectorStore(client, indexName, embeddingProvider.getDimensions());
+    const embeddingDimensions = embeddingProvider.getDimensions();
+    console.warn(
+      `Using embedding provider (PDF): ${embeddingProvider.getModel()} with ${embeddingDimensions} dimensions`
+    );
+    await ensureVectorStore(client, indexName, embeddingDimensions);
 
     const timeoutMs = Number(process.env.DOCS_TIMEOUT_MS || '') || 25000;
     const userAgent = process.env.DOCS_USER_AGENT || DEFAULT_CRAWLER_UA;

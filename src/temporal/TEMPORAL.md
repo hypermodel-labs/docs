@@ -15,7 +15,7 @@ This MCP server uses Temporal Cloud for background processing of documentation i
 # Your Temporal Cloud namespace address
 TEMPORAL_ADDRESS=your-namespace.a2dd6.tmprl.cloud:7233
 
-# Your Temporal Cloud namespace  
+# Your Temporal Cloud namespace
 TEMPORAL_NAMESPACE=your-namespace
 
 # Base64-encoded TLS certificate
@@ -39,6 +39,7 @@ npm run worker
 The indexing is now asynchronous:
 
 1. Start an indexing job:
+
    ```
    Use the "index" tool with a URL
    ```

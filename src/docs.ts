@@ -27,6 +27,10 @@ async function createEmbeddingProviderInstance(): Promise<EmbeddingProvider> {
     throw new Error(`${config.provider.toUpperCase()}_API_KEY not set`);
   }
 
+  console.warn(
+    `Using ${config.provider} embedding provider with model ${config.model} and ${config.dimensions} dimensions`
+  );
+
   return createEmbeddingProvider(config.provider, config.apiKey, config.model, config.dimensions);
 }
 
@@ -453,6 +457,53 @@ export function createDocsTool(server: McpServer) {
         return { content: [{ type: 'text', text: `Failed to list indexing jobs: ${message}` }] };
       } finally {
         await client.end();
+      }
+    }
+  );
+
+  // Create a tool to check current embedding configuration
+  server.tool(
+    'embedding-config',
+    'Check the current embedding provider configuration and settings.',
+    {},
+    async () => {
+      try {
+        const config = getEmbeddingConfig();
+        const hasApiKey = !!config.apiKey;
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  provider: config.provider,
+                  model: config.model,
+                  dimensions: config.dimensions,
+                  apiKeyConfigured: hasApiKey,
+                  environmentVariables: {
+                    EMBEDDING_PROVIDER:
+                      process.env.EMBEDDING_PROVIDER || 'not set (defaults to openai)',
+                    [`${config.provider.toUpperCase()}_API_KEY`]: hasApiKey
+                      ? 'configured'
+                      : 'not set',
+                    [`${config.provider.toUpperCase()}_EMBEDDING_MODEL`]:
+                      process.env[`${config.provider.toUpperCase()}_EMBEDDING_MODEL`] ||
+                      'using default',
+                    [`${config.provider.toUpperCase()}_EMBEDDING_DIMENSIONS`]:
+                      process.env[`${config.provider.toUpperCase()}_EMBEDDING_DIMENSIONS`] ||
+                      'using default',
+                  },
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Failed to get embedding config: ${message}` }] };
       }
     }
   );

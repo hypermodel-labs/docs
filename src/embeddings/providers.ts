@@ -56,14 +56,15 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     const response = await this.client.models.embedContent({
       model: this.model,
       contents: texts,
-      ...(this.dimensions !== 3072 && { outputDimensionality: this.dimensions }),
+      outputDimensionality: this.dimensions,
     });
 
     if (!response.embeddings) {
       throw new Error('No embeddings returned from Gemini API');
     }
 
-    // Normalize embeddings for dimensions other than 3072
+    // According to Gemini docs, only 3072 dimension embeddings are pre-normalized
+    // All other dimensions need manual normalization
     const embeddings = response.embeddings.map(embedding => {
       const values = embedding.values;
 
@@ -72,8 +73,11 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
       }
 
       if (this.dimensions !== 3072) {
-        // Normalize the embedding vector
+        // Normalize the embedding vector for better semantic similarity
         const magnitude = Math.sqrt(values.reduce((sum, val) => sum + val * val, 0));
+        if (magnitude === 0) {
+          throw new Error('Zero magnitude embedding vector');
+        }
         return values.map(val => val / magnitude);
       }
 
