@@ -204,10 +204,10 @@ class EmbeddingRateLimiter {
   }
 }
 
-// Configure limiter with headroom below absolute limits to avoid 429s
-const CONFIGURED_RPM = Number(process.env.DOCS_EMBED_RPM || '') || 9000; // 90% of 10k
-const CONFIGURED_TPM = Number(process.env.DOCS_EMBED_TPM || '') || 9000000; // 90% of 10M
-const CONFIGURED_TPD = Number(process.env.DOCS_EMBED_TPD || '') || 3800000000; // 95% of 4B
+// Configure limiter with much more conservative limits to avoid 429s
+const CONFIGURED_RPM = Number(process.env.DOCS_EMBED_RPM || '') || 1000; // Much more conservative
+const CONFIGURED_TPM = Number(process.env.DOCS_EMBED_TPM || '') || 500000; // 500k tokens per minute
+const CONFIGURED_TPD = Number(process.env.DOCS_EMBED_TPD || '') || 1000000000; // 1B tokens per day
 const CONFIGURED_MAX_RETRIES = Number(process.env.DOCS_EMBED_MAX_RETRIES || '') || 6;
 const CONFIGURED_INITIAL_BACKOFF_MS =
   Number(process.env.DOCS_EMBED_INITIAL_BACKOFF_MS || '') || 500;
@@ -731,32 +731,152 @@ export async function indexDocumentationActivity(
     await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
 
     // Crawl and index
-    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 32; // chunks per embedding batch
+    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 8; // chunks per embedding batch (reduced from 32)
     let pendingChunks: { url: string; title: string; content: string }[] = [];
 
     const flush = async () => {
       if (pendingChunks.length === 0) return;
-      const contents = pendingChunks.map(c => c.content);
-      await distributedAcquirePostgres(client, {
-        requests: 1,
-        tokens: estimateTokensForTexts(contents),
-      });
-      const embeddings = await embedBatch(openai, contents);
-      for (let i = 0; i < pendingChunks.length; i += 1) {
-        const { url, title, content } = pendingChunks[i];
-        const embedding = embeddings[i];
-        const metadata = { source: url, type: 'html', title, size: content.length } as const;
-        await upsertDocument(
-          client,
-          indexName,
-          url + '#' + crypto.createHash('md5').update(content).digest('hex'),
-          title,
-          content,
-          embedding,
-          metadata
-        );
-        totalChunks++;
+
+      const maxRetries = 3;
+      let attempt = 0;
+      let currentChunks = [...pendingChunks];
+
+      while (attempt < maxRetries) {
+        try {
+          const contents = currentChunks.map(c => c.content);
+          await distributedAcquirePostgres(client, {
+            requests: 1,
+            tokens: estimateTokensForTexts(contents),
+          });
+
+          const embeddings = await embedBatch(openai, contents);
+
+          // Only proceed with upsert if embeddings were successful
+          if (embeddings.length !== currentChunks.length) {
+            throw new Error(
+              `Embedding count mismatch: expected ${currentChunks.length}, got ${embeddings.length}`
+            );
+          }
+
+          for (let i = 0; i < currentChunks.length; i += 1) {
+            const { url, title, content } = currentChunks[i];
+            const embedding = embeddings[i];
+            const metadata = { source: url, type: 'html', title, size: content.length } as const;
+            await upsertDocument(
+              client,
+              indexName,
+              url + '#' + crypto.createHash('md5').update(content).digest('hex'),
+              title,
+              content,
+              embedding,
+              metadata
+            );
+            totalChunks++;
+          }
+
+          // Success - break out of retry loop
+          break;
+        } catch (error) {
+          attempt++;
+          const status = getErrorStatus(error);
+          const isRateLimit = status === 429;
+
+          console.warn(`Batch processing attempt ${attempt} failed:`, {
+            error: error instanceof Error ? error.message : String(error),
+            status,
+            isRateLimit,
+            chunkCount: currentChunks.length,
+          });
+
+          if (attempt >= maxRetries) {
+            // Final attempt failed - try splitting the batch if it's large enough
+            if (currentChunks.length > 1 && isRateLimit) {
+              console.warn(
+                `Splitting batch of ${currentChunks.length} chunks into smaller batches`
+              );
+              const midpoint = Math.ceil(currentChunks.length / 2);
+              const firstHalf = currentChunks.slice(0, midpoint);
+              const secondHalf = currentChunks.slice(midpoint);
+
+              // Process each half separately with fresh retry attempts
+              for (const subBatch of [firstHalf, secondHalf]) {
+                await processSubBatch(subBatch);
+              }
+              break;
+            } else {
+              throw error; // Final failure
+            }
+          }
+
+          // Calculate backoff delay, respecting Retry-After header for rate limits
+          let delayMs = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
+          if (isRateLimit) {
+            const headers = getErrorHeaders(error);
+            const retryAfterHeader = (headers['retry-after'] || headers['Retry-After']) as unknown;
+            const retryAfterMs = parseRetryAfter(retryAfterHeader);
+            if (retryAfterMs !== undefined) {
+              delayMs = Math.max(delayMs, retryAfterMs);
+            }
+          }
+
+          console.warn(
+            `Waiting ${Math.round(delayMs / 1000)}s before retry ${attempt + 1}/${maxRetries}`
+          );
+          await sleep(delayMs);
+        }
       }
+
+      // Helper function to process sub-batches with their own retry logic
+      async function processSubBatch(chunks: typeof currentChunks) {
+        let subAttempt = 0;
+        const subMaxRetries = 2;
+
+        while (subAttempt < subMaxRetries) {
+          try {
+            const contents = chunks.map(c => c.content);
+            await distributedAcquirePostgres(client, {
+              requests: 1,
+              tokens: estimateTokensForTexts(contents),
+            });
+
+            const embeddings = await embedBatch(openai, contents);
+
+            if (embeddings.length !== chunks.length) {
+              throw new Error(
+                `Sub-batch embedding count mismatch: expected ${chunks.length}, got ${embeddings.length}`
+              );
+            }
+
+            for (let i = 0; i < chunks.length; i += 1) {
+              const { url, title, content } = chunks[i];
+              const embedding = embeddings[i];
+              const metadata = { source: url, type: 'html', title, size: content.length } as const;
+              await upsertDocument(
+                client,
+                indexName,
+                url + '#' + crypto.createHash('md5').update(content).digest('hex'),
+                title,
+                content,
+                embedding,
+                metadata
+              );
+              totalChunks++;
+            }
+            break; // Success
+          } catch (subError) {
+            subAttempt++;
+            if (subAttempt >= subMaxRetries) {
+              console.error(
+                `Sub-batch processing failed after ${subMaxRetries} attempts:`,
+                subError
+              );
+              throw subError;
+            }
+            await sleep(2000 * subAttempt); // Simple linear backoff for sub-batches
+          }
+        }
+      }
+
       pendingChunks = [];
 
       // Update progress periodically
@@ -937,38 +1057,164 @@ export async function indexPdfActivity(
       .replace(/\s+/g, ' ')
       .trim();
 
-    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 32;
+    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 8; // chunks per embedding batch (reduced from 32)
     let pendingChunks: { url: string; title: string; content: string }[] = [];
 
     const flush = async () => {
       if (pendingChunks.length === 0) return;
-      const contents = pendingChunks.map(c => c.content);
-      await distributedAcquirePostgres(client, {
-        requests: 1,
-        tokens: estimateTokensForTexts(contents),
-      });
-      const embeddings = await embedBatch(openai, contents);
-      for (let i = 0; i < pendingChunks.length; i += 1) {
-        const { url, title, content } = pendingChunks[i];
-        const embedding = embeddings[i];
-        const metadata = {
-          source: url,
-          type: 'pdf',
-          title,
-          size: content.length,
-          pageCount: Number(parsed?.numpages || 0),
-        } as const;
-        await upsertDocument(
-          client,
-          indexName,
-          url + '#' + crypto.createHash('md5').update(content).digest('hex'),
-          title,
-          content,
-          embedding,
-          metadata
-        );
-        totalChunks++;
+
+      const maxRetries = 3;
+      let attempt = 0;
+      let currentChunks = [...pendingChunks];
+
+      while (attempt < maxRetries) {
+        try {
+          const contents = currentChunks.map(c => c.content);
+          await distributedAcquirePostgres(client, {
+            requests: 1,
+            tokens: estimateTokensForTexts(contents),
+          });
+
+          const embeddings = await embedBatch(openai, contents);
+
+          // Only proceed with upsert if embeddings were successful
+          if (embeddings.length !== currentChunks.length) {
+            throw new Error(
+              `Embedding count mismatch: expected ${currentChunks.length}, got ${embeddings.length}`
+            );
+          }
+
+          for (let i = 0; i < currentChunks.length; i += 1) {
+            const { url, title, content } = currentChunks[i];
+            const embedding = embeddings[i];
+            const metadata = {
+              source: url,
+              type: 'pdf',
+              title,
+              size: content.length,
+              pageCount: Number(parsed?.numpages || 0),
+            } as const;
+            await upsertDocument(
+              client,
+              indexName,
+              url + '#' + crypto.createHash('md5').update(content).digest('hex'),
+              title,
+              content,
+              embedding,
+              metadata
+            );
+            totalChunks++;
+          }
+
+          // Success - break out of retry loop
+          break;
+        } catch (error) {
+          attempt++;
+          const status = getErrorStatus(error);
+          const isRateLimit = status === 429;
+
+          console.warn(`PDF batch processing attempt ${attempt} failed:`, {
+            error: error instanceof Error ? error.message : String(error),
+            status,
+            isRateLimit,
+            chunkCount: currentChunks.length,
+          });
+
+          if (attempt >= maxRetries) {
+            // Final attempt failed - try splitting the batch if it's large enough
+            if (currentChunks.length > 1 && isRateLimit) {
+              console.warn(
+                `Splitting PDF batch of ${currentChunks.length} chunks into smaller batches`
+              );
+              const midpoint = Math.ceil(currentChunks.length / 2);
+              const firstHalf = currentChunks.slice(0, midpoint);
+              const secondHalf = currentChunks.slice(midpoint);
+
+              // Process each half separately with fresh retry attempts
+              for (const subBatch of [firstHalf, secondHalf]) {
+                await processSubBatch(subBatch);
+              }
+              break;
+            } else {
+              throw error; // Final failure
+            }
+          }
+
+          // Calculate backoff delay, respecting Retry-After header for rate limits
+          let delayMs = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
+          if (isRateLimit) {
+            const headers = getErrorHeaders(error);
+            const retryAfterHeader = (headers['retry-after'] || headers['Retry-After']) as unknown;
+            const retryAfterMs = parseRetryAfter(retryAfterHeader);
+            if (retryAfterMs !== undefined) {
+              delayMs = Math.max(delayMs, retryAfterMs);
+            }
+          }
+
+          console.warn(
+            `Waiting ${Math.round(delayMs / 1000)}s before PDF retry ${attempt + 1}/${maxRetries}`
+          );
+          await sleep(delayMs);
+        }
       }
+
+      // Helper function to process sub-batches with their own retry logic
+      async function processSubBatch(chunks: typeof currentChunks) {
+        let subAttempt = 0;
+        const subMaxRetries = 2;
+
+        while (subAttempt < subMaxRetries) {
+          try {
+            const contents = chunks.map(c => c.content);
+            await distributedAcquirePostgres(client, {
+              requests: 1,
+              tokens: estimateTokensForTexts(contents),
+            });
+
+            const embeddings = await embedBatch(openai, contents);
+
+            if (embeddings.length !== chunks.length) {
+              throw new Error(
+                `Sub-batch embedding count mismatch: expected ${chunks.length}, got ${embeddings.length}`
+              );
+            }
+
+            for (let i = 0; i < chunks.length; i += 1) {
+              const { url, title, content } = chunks[i];
+              const embedding = embeddings[i];
+              const metadata = {
+                source: url,
+                type: 'pdf',
+                title,
+                size: content.length,
+                pageCount: Number(parsed?.numpages || 0),
+              } as const;
+              await upsertDocument(
+                client,
+                indexName,
+                url + '#' + crypto.createHash('md5').update(content).digest('hex'),
+                title,
+                content,
+                embedding,
+                metadata
+              );
+              totalChunks++;
+            }
+            break; // Success
+          } catch (subError) {
+            subAttempt++;
+            if (subAttempt >= subMaxRetries) {
+              console.error(
+                `PDF sub-batch processing failed after ${subMaxRetries} attempts:`,
+                subError
+              );
+              throw subError;
+            }
+            await sleep(2000 * subAttempt); // Simple linear backoff for sub-batches
+          }
+        }
+      }
+
       pendingChunks = [];
 
       try {

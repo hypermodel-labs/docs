@@ -248,16 +248,15 @@ export function createOAuthModule(options?: { mcpPath?: string }): OAuthModule {
     if (!rec) {
       const metaUrl = `${baseUrlFor(req)}/.well-known/oauth-protected-resource`;
       res.setHeader('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${metaUrl}"`);
-      return res
-        .status(401)
-        .json({ error: 'invalid_token', error_description: 'Token not found - please re-authenticate' });
+      return res.status(401).json({
+        error: 'invalid_token',
+        error_description: 'Token not found - please re-authenticate',
+      });
     }
     if (rec.expiresAt && Date.now() > rec.expiresAt) {
       const metaUrl = `${baseUrlFor(req)}/.well-known/oauth-protected-resource`;
       res.setHeader('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${metaUrl}"`);
-      return res
-        .status(401)
-        .json({ error: 'invalid_token', error_description: 'Expired token' });
+      return res.status(401).json({ error: 'invalid_token', error_description: 'Expired token' });
     }
     return next();
   }
