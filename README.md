@@ -46,6 +46,38 @@ Use `@hypermodel/docs` MCP server with your favourite AI coding agent
 3. Once linked, all `list-docs`, `search-docs`, and `index` operations work within that scope
 4. Each user has access to docs based on their permissions and scope context
 
+## Embedding Provider Configuration
+
+The system supports both OpenAI and Google Gemini for generating embeddings. By default, it uses OpenAI, but you can configure it to use Gemini instead.
+
+**Environment Variables**
+
+| Variable | Description | Default Value |
+|----------|-------------|---------------|
+| `EMBEDDING_PROVIDER` | Choose embedding provider: `openai` or `gemini` | `openai` |
+| `OPENAI_API_KEY` | OpenAI API key (required when using OpenAI) | - |
+| `OPENAI_EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
+| `OPENAI_EMBEDDING_DIMENSIONS` | OpenAI embedding dimensions | `512` |
+| `GEMINI_API_KEY` | Google Gemini API key (required when using Gemini) | - |
+| `GEMINI_EMBEDDING_MODEL` | Gemini embedding model | `gemini-embedding-001` |
+| `GEMINI_EMBEDDING_DIMENSIONS` | Gemini embedding dimensions | `768` |
+
+**Examples**
+
+To use OpenAI (default):
+```bash
+export OPENAI_API_KEY="your-openai-key"
+# EMBEDDING_PROVIDER defaults to 'openai'
+```
+
+To use Google Gemini:
+```bash
+export EMBEDDING_PROVIDER="gemini"
+export GEMINI_API_KEY="your-gemini-key"
+```
+
+**Note**: When switching embedding providers, ensure that existing vector stores are compatible with the new embedding dimensions, or re-index your documentation with the new provider.
+
 
 
 **Tools exposed for your coding agents**

@@ -2,12 +2,12 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import crypto from 'node:crypto';
 import { Client as PgClient } from 'pg';
-import OpenAI from 'openai';
 import os from 'node:os';
 import pdfParse from 'pdf-parse';
 import { updateIndexingJobStatus } from '../scope';
 import { deriveIndexNameFromUrl } from '../deriveIndexName';
-import { DEFAULT_EMBEDDING_MODEL, DEFAULT_VECTOR_DIMENSION } from '../settings';
+import { getEmbeddingConfig } from '../settings';
+import { createEmbeddingProvider, EmbeddingProvider } from '../embeddings/providers';
 
 type CrawlOptions = {
   maxPages?: number;
@@ -708,20 +708,27 @@ function chunkText(text: string, chunkSize = 1500, overlap = 150): string[] {
   return chunks;
 }
 
+async function createEmbeddingProviderInstance(): Promise<EmbeddingProvider> {
+  const config = getEmbeddingConfig();
+
+  if (!config.apiKey) {
+    throw new Error(`${config.provider.toUpperCase()}_API_KEY not set`);
+  }
+
+  return createEmbeddingProvider(config.provider, config.apiKey, config.model, config.dimensions);
+}
+
 async function embedBatch(
-  openai: OpenAI,
-  texts: string[],
-  model = DEFAULT_EMBEDDING_MODEL
+  embeddingProvider: EmbeddingProvider,
+  texts: string[]
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   const tokens = estimateTokensForTexts(texts);
-  console.warn('embeddingBatch(size): ', texts.length, tokens, model);
+  console.warn('embeddingBatch(size): ', texts.length, tokens, embeddingProvider.getModel());
   await embeddingLimiter.acquire({ requests: 1, tokens });
-  const response = await embeddingLimiter.withRetry(() =>
-    openai.embeddings.create({ model, input: texts })
-  );
-  console.warn('embeddingBatch(done): ', response.data.length, model);
-  return response.data.map((d: { embedding: number[] }) => d.embedding as unknown as number[]);
+  const embeddings = await embeddingLimiter.withRetry(() => embeddingProvider.embedBatch(texts));
+  console.warn('embeddingBatch(done): ', embeddings.length, embeddingProvider.getModel());
+  return embeddings;
 }
 
 async function upsertDocument(
@@ -755,12 +762,10 @@ export async function indexDocumentationActivity(
 ): Promise<{ indexName: string; pagesIndexed: number; totalChunks: number }> {
   const indexName = deriveIndexNameFromUrl(startUrl);
   const connectionString = process.env.POSTGRES_CONNECTION_STRING;
-  const openaiApiKey = process.env.OPENAI_API_KEY;
   if (!connectionString) throw new Error('POSTGRES_CONNECTION_STRING is not set');
-  if (!openaiApiKey) throw new Error('OPENAI_API_KEY is not set');
 
   const client = new PgClient({ connectionString });
-  const openai = new OpenAI({ apiKey: openaiApiKey });
+  const embeddingProvider = await createEmbeddingProviderInstance();
   await client.connect();
 
   let pagesDiscovered = 0;
@@ -776,7 +781,7 @@ export async function indexDocumentationActivity(
   }
 
   try {
-    await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
+    await ensureVectorStore(client, indexName, embeddingProvider.getDimensions());
 
     // Crawl and index
     // Clamp batch size to a conservative default; allow env override but cap at 16
@@ -799,7 +804,7 @@ export async function indexDocumentationActivity(
             tokens: estimateTokensForTexts(contents),
           });
 
-          const embeddings = await embedBatch(openai, contents);
+          const embeddings = await embedBatch(embeddingProvider, contents);
 
           // Only proceed with upsert if embeddings were successful
           if (embeddings.length !== currentChunks.length) {
@@ -897,7 +902,7 @@ export async function indexDocumentationActivity(
               tokens: estimateTokensForTexts(contents),
             });
 
-            const embeddings = await embedBatch(openai, contents);
+            const embeddings = await embedBatch(embeddingProvider, contents);
 
             if (embeddings.length !== chunks.length) {
               throw new Error(
@@ -1084,12 +1089,10 @@ export async function indexPdfActivity(
 ): Promise<{ indexName: string; pagesIndexed: number; totalChunks: number }> {
   const indexName = deriveIndexNameFromUrl(pdfUrl);
   const connectionString = process.env.POSTGRES_CONNECTION_STRING;
-  const openaiApiKey = process.env.OPENAI_API_KEY;
   if (!connectionString) throw new Error('POSTGRES_CONNECTION_STRING is not set');
-  if (!openaiApiKey) throw new Error('OPENAI_API_KEY is not set');
 
   const client = new PgClient({ connectionString });
-  const openai = new OpenAI({ apiKey: openaiApiKey });
+  const embeddingProvider = await createEmbeddingProviderInstance();
   await client.connect();
 
   // For PDFs, we treat the entire PDF as one "page" for counters
@@ -1105,7 +1108,7 @@ export async function indexPdfActivity(
       console.warn('Failed to update job status to running (pdf):', error);
     }
 
-    await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
+    await ensureVectorStore(client, indexName, embeddingProvider.getDimensions());
 
     const timeoutMs = Number(process.env.DOCS_TIMEOUT_MS || '') || 25000;
     const userAgent = process.env.DOCS_USER_AGENT || DEFAULT_CRAWLER_UA;
@@ -1151,7 +1154,7 @@ export async function indexPdfActivity(
             tokens: estimateTokensForTexts(contents),
           });
 
-          const embeddings = await embedBatch(openai, contents);
+          const embeddings = await embedBatch(embeddingProvider, contents);
 
           // Only proceed with upsert if embeddings were successful
           if (embeddings.length !== currentChunks.length) {
@@ -1256,7 +1259,7 @@ export async function indexPdfActivity(
               tokens: estimateTokensForTexts(contents),
             });
 
-            const embeddings = await embedBatch(openai, contents);
+            const embeddings = await embedBatch(embeddingProvider, contents);
 
             if (embeddings.length !== chunks.length) {
               throw new Error(

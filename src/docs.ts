@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client as PgClient } from 'pg';
-import OpenAI from 'openai';
 import { createTemporalClient } from './temporal/client';
 import { deriveIndexNameFromUrl } from './deriveIndexName';
 import { indexDocumentationWorkflow, indexPdfWorkflow } from './temporal/workflows';
@@ -18,21 +17,17 @@ import {
   ScopeType,
   AccessLevel,
 } from './scope';
-import { DEFAULT_EMBEDDING_MODEL } from './settings';
-import { DEFAULT_VECTOR_DIMENSION } from './settings';
+import { getEmbeddingConfig } from './settings';
+import { createEmbeddingProvider, EmbeddingProvider } from './embeddings/providers';
 
-async function embedBatch(
-  openai: OpenAI,
-  texts: string[],
-  model = DEFAULT_EMBEDDING_MODEL
-): Promise<number[][]> {
-  if (texts.length === 0) return [];
-  const response = await openai.embeddings.create({
-    model,
-    input: texts,
-    dimensions: DEFAULT_VECTOR_DIMENSION, // Explicitly set dimensions to 1536
-  });
-  return response.data.map((d: { embedding: number[] }) => d.embedding as unknown as number[]);
+async function createEmbeddingProviderInstance(): Promise<EmbeddingProvider> {
+  const config = getEmbeddingConfig();
+
+  if (!config.apiKey) {
+    throw new Error(`${config.provider.toUpperCase()}_API_KEY not set`);
+  }
+
+  return createEmbeddingProvider(config.provider, config.apiKey, config.model, config.dimensions);
 }
 
 export function createDocsTool(server: McpServer) {
@@ -90,16 +85,11 @@ export function createDocsTool(server: McpServer) {
     },
     async ({ index, query, topK }) => {
       const connectionString = process.env.POSTGRES_CONNECTION_STRING;
-      const openaiApiKey = process.env.OPENAI_API_KEY;
       if (!connectionString) {
         return { content: [{ type: 'text', text: 'Error: POSTGRES_CONNECTION_STRING not set' }] };
       }
-      if (!openaiApiKey) {
-        return { content: [{ type: 'text', text: 'Error: OPENAI_API_KEY not set' }] };
-      }
 
       const client = new PgClient({ connectionString });
-      const openai = new OpenAI({ apiKey: openaiApiKey });
       try {
         await client.connect();
 
@@ -127,8 +117,9 @@ export function createDocsTool(server: McpServer) {
         const table = `docs_${index}`;
         const quotedTable = `"${table}"`;
 
-        // Generate embedding
-        const [embedding] = await embedBatch(openai, [query]);
+        // Generate embedding using the configured provider
+        const embeddingProvider = await createEmbeddingProviderInstance();
+        const [embedding] = await embeddingProvider.embedBatch([query]);
         const vectorParam = `[${embedding.join(',')}]`;
         // Query by cosine distance
         const { rows } = await client.query<{
