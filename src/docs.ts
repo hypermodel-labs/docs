@@ -266,8 +266,8 @@ export function createDocsTool(server: McpServer) {
             args: [url, workflowId],
             taskQueue: 'docs-indexing',
             workflowId,
-            workflowRunTimeout: '1 hour',
-            workflowExecutionTimeout: '1 hour',
+            workflowRunTimeout: '6 hour',
+            workflowExecutionTimeout: '6 hour',
           }
         );
 
