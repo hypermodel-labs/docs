@@ -667,10 +667,12 @@ async function embedBatch(
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   const tokens = estimateTokensForTexts(texts);
+  console.warn('embeddingBatch(size): ', texts.length, tokens, model);
   await embeddingLimiter.acquire({ requests: 1, tokens });
   const response = await embeddingLimiter.withRetry(() =>
     openai.embeddings.create({ model, input: texts })
   );
+  console.warn('embeddingBatch(done): ', response.data.length, model);
   return response.data.map((d: { embedding: number[] }) => d.embedding as unknown as number[]);
 }
 
