@@ -20,9 +20,22 @@ RUN pnpm build
 # Runtime stage (Debian-based for glibc + Temporal compatibility)
 FROM node:20-bookworm-slim AS runner
 
-# Install CA certificates to fix TLS errors
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Install CA certificates and Playwright dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends --allow-unauthenticated \
+    ca-certificates \
+    # Playwright/Chromium dependencies (minimal set)
+    libnss3 \
+    libnspr4 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libxss1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 ENV NODE_ENV=production
 WORKDIR /app
@@ -66,7 +79,9 @@ COPY --from=builder /app/pnpm-lock.yaml ./
 # Install production dependencies only
 RUN corepack enable && \
     corepack prepare pnpm@8.9.0 --activate && \
-    pnpm install --prod
+    pnpm install --prod && \
+    # Install Playwright Chromium browser with retry logic
+    npx playwright install chromium --with-deps || npx playwright install chromium
 
 # Temporal worker does not expose a port
 

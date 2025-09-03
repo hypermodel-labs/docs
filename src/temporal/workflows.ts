@@ -2,11 +2,11 @@ import { proxyActivities } from '@temporalio/workflow';
 import type * as activities from './activities';
 
 const { indexDocumentationActivity, indexPdfActivity } = proxyActivities<typeof activities>({
-  startToCloseTimeout: '1 hour',
+  startToCloseTimeout: '3 hour',
   retry: {
     maximumAttempts: 3,
   },
-  heartbeatTimeout: '1 hour',
+  heartbeatTimeout: '3 hour',
 });
 
 export async function indexDocumentationWorkflow(

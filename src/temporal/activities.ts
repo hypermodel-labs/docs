@@ -1,9 +1,12 @@
 import axios from 'axios';
+import { CookieJar } from 'tough-cookie';
+import { wrapper } from 'axios-cookiejar-support';
 import * as cheerio from 'cheerio';
 import crypto from 'node:crypto';
 import { Client as PgClient } from 'pg';
 import os from 'node:os';
 import pdfParse from 'pdf-parse';
+import { chromium, devices } from 'playwright';
 import { updateIndexingJobStatus } from '../scope';
 import { deriveIndexNameFromUrl } from '../deriveIndexName';
 import { getEmbeddingConfig } from '../settings';
@@ -34,6 +37,10 @@ type PdfParseResult = {
 };
 
 const DEFAULT_CRAWLER_UA = 'docs-mcp-crawler/1.0 (+https://hypermodel.dev) axios';
+
+// Create axios instance with cookie jar
+const jar = new CookieJar();
+const http = wrapper(axios.create({ jar, withCredentials: true }));
 
 // Simple token estimator: ~4 chars per token as a heuristic for English text
 function estimateTokens(text: string): number {
@@ -454,14 +461,19 @@ function extractMainText(html: string, pageUrl: string): { title: string; text: 
   return { title, text };
 }
 
+// Enhanced to detect PDF links for routing to indexPdfActivity
 function isLikelyDocUrl(base: URL, target: URL): boolean {
   if (['http:', 'https:'].includes(target.protocol) === false) return false;
   // same domain if required
   if (base.hostname !== target.hostname) return false;
-  // ignore non-html assets
-  const ASSET_REGEX = /\.(png|jpg|jpeg|gif|svg|pdf|zip|tar|gz|tgz|mp4|mp3|wav|webm|ico)$/i;
+  // ignore non-html/pdf assets
+  const ASSET_REGEX = /\.(png|jpg|jpeg|gif|svg|zip|tar|gz|tgz|mp4|mp3|wav|webm|ico)$/i;
   if (ASSET_REGEX.test(target.pathname)) return false;
   return true;
+}
+
+function isPdfUrl(url: string): boolean {
+  return /\.pdf(\?|$)/i.test(url);
 }
 
 function normalizeUrl(u: string): string {
@@ -485,6 +497,33 @@ function normalizeUrl(u: string): string {
   }
 }
 
+// Playwright fallback for bot walls
+async function fetchWithBrowser(url: string, timeoutMs: number) {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      ...devices['Desktop Chrome'],
+      userAgent:
+        process.env.DOCS_USER_AGENT ||
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118 Safari/537.36',
+      javaScriptEnabled: true,
+      locale: 'en-US',
+    });
+    const page = await context.newPage();
+    await page.route('**/*.{png,jpg,jpeg,gif,webp,svg,mp4,woff,woff2}', r => r.abort());
+    const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    await page
+      .waitForLoadState('networkidle', { timeout: Math.min(10000, timeoutMs) })
+      .catch(() => {});
+    const status = resp?.status() ?? 0;
+    const html = await page.content();
+    await context.close();
+    return { status, html };
+  } finally {
+    await browser.close();
+  }
+}
+
 async function discoverSitemaps(
   startUrl: string,
   timeoutMs: number,
@@ -492,8 +531,14 @@ async function discoverSitemaps(
 ): Promise<string[]> {
   const base = new URL(startUrl);
   const headers = {
-    'User-Agent': userAgent || DEFAULT_CRAWLER_UA,
+    'User-Agent':
+      userAgent ||
+      process.env.DOCS_USER_AGENT ||
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118 Safari/537.36',
     Accept: 'text/plain,application/xml,application/xhtml+xml,text/html;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
   } as const;
 
   const candidates = [
@@ -506,7 +551,7 @@ async function discoverSitemaps(
 
   for (const candidate of candidates) {
     try {
-      const res = await axios.get(candidate, { timeout: timeoutMs, responseType: 'text', headers });
+      const res = await http.get(candidate, { timeout: timeoutMs, responseType: 'text', headers });
       const contentType = (res.headers['content-type'] || '').toLowerCase();
       const body: string = res.data ?? '';
       if (candidate.endsWith('robots.txt')) {
@@ -552,13 +597,19 @@ async function expandSitemapsToUrls(
   userAgent?: string
 ): Promise<string[]> {
   const headers = {
-    'User-Agent': userAgent || DEFAULT_CRAWLER_UA,
+    'User-Agent':
+      userAgent ||
+      process.env.DOCS_USER_AGENT ||
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118 Safari/537.36',
     Accept: 'application/xml,text/plain;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
   } as const;
   const urls: string[] = [];
   for (const sm of sitemaps) {
     try {
-      const res = await axios.get(sm, { timeout: timeoutMs, responseType: 'text', headers });
+      const res = await http.get(sm, { timeout: timeoutMs, responseType: 'text', headers });
       const body: string = res.data ?? '';
       const $ = cheerio.load(body, { xmlMode: true });
       // If it's a sitemap index, it will have <sitemap><loc> children
@@ -613,20 +664,44 @@ async function crawlSite(
     visited.add(current);
     active += 1;
     try {
-      const res = await axios.get(current, {
+      const res = await http.get(current, {
         timeout: timeoutMs,
         responseType: 'text',
         headers: {
-          'User-Agent': userAgent || DEFAULT_CRAWLER_UA,
+          'User-Agent':
+            userAgent ||
+            process.env.DOCS_USER_AGENT ||
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118 Safari/537.36',
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
         },
         validateStatus: (status: number) => status >= 200 && status < 400, // follow 3xx via Location
         maxRedirects: 5,
       });
+      // Handle bot wall detection and fallback
+      let html = typeof res?.data === 'string' ? res.data : '';
+      const status = res?.status ?? 0;
+      const looksLikeBotWall =
+        /verify.*not a robot|javascript is disabled|access denied|blocked|enable cookies/i.test(
+          html
+        );
+
+      if (!html || status >= 400 || looksLikeBotWall) {
+        try {
+          const br = await fetchWithBrowser(current, timeoutMs);
+          if (br?.html) html = br.html;
+        } catch (e) {
+          console.warn('Browser fallback failed', { url: current, error: (e as Error).message });
+          return;
+        }
+      }
+      if (!html) return;
+
       const contentType = res.headers['content-type'] || '';
-      if (!contentType.includes('text/html')) return;
-      const { title, text } = extractMainText(res.data, current);
+      if (!contentType.includes('text/html') && !looksLikeBotWall) return;
+      const { title, text } = extractMainText(html, current);
       if (text && text.length > 0) {
         await onPage({ url: current, title, text });
         if (onProgress) {
@@ -634,7 +709,7 @@ async function crawlSite(
         }
       }
       // discover links
-      const $ = cheerio.load(res.data);
+      const $ = cheerio.load(html);
       $('a[href]').each((index: number, el: unknown) => {
         const href = ($(el as any).attr('href') || '').trim();
         if (!href) return;
@@ -642,6 +717,13 @@ async function crawlSite(
           const abs = new URL(href, current);
           if (sameDomainOnly && abs.hostname !== start.hostname) return;
           if (pathPrefix && !abs.pathname.startsWith(pathPrefix)) return;
+
+          // Check if it's a PDF and potentially route to indexPdfActivity later
+          if (isPdfUrl(abs.toString())) {
+            console.log('Found PDF link:', abs.toString());
+            // For now, we'll add it to queue but could route to indexPdfActivity
+          }
+
           if (!isLikelyDocUrl(start, abs)) return;
           const normalized = normalizeUrl(abs.toString());
           if (includePatterns.length && !includePatterns.some(r => r.test(normalized))) return;
@@ -657,8 +739,24 @@ async function crawlSite(
           // ignore bad URL
         }
       });
-    } catch {
-      // ignore fetch errors
+    } catch (err) {
+      const status = getErrorStatus(err);
+      const headers = getErrorHeaders(err);
+      const body = (err as any)?.response?.data;
+      const snippet = typeof body === 'string' ? body.slice(0, 300).replace(/\s+/g, ' ') : '';
+      console.warn('Fetch failed', {
+        url: current,
+        status,
+        headers: { 'content-type': headers['content-type'], server: headers['server'] },
+        snippet,
+      });
+
+      // Handle 403/429 status codes with backoff
+      if (status === 403 || status === 429) {
+        console.warn(`Status ${status} encountered for ${current}, backing off`);
+        await sleep(2000);
+      }
+      return; // bail on this URL
     } finally {
       active -= 1;
       if (queue.length && visited.size < maxPages) {
@@ -1126,12 +1224,18 @@ export async function indexPdfActivity(
     const userAgent = process.env.DOCS_USER_AGENT || DEFAULT_CRAWLER_UA;
 
     // Fetch PDF bytes
-    const res = await axios.get(pdfUrl, {
+    const res = await http.get(pdfUrl, {
       responseType: 'arraybuffer',
       timeout: timeoutMs,
       headers: {
-        'User-Agent': userAgent,
+        'User-Agent':
+          userAgent ||
+          process.env.DOCS_USER_AGENT ||
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118 Safari/537.36',
         Accept: 'application/pdf,application/octet-stream;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
       },
       validateStatus: (status: number) => status >= 200 && status < 400,
       maxRedirects: 5,
