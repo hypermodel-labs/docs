@@ -7,6 +7,7 @@ import os from 'node:os';
 import pdfParse from 'pdf-parse';
 import { updateIndexingJobStatus } from '../scope';
 import { deriveIndexNameFromUrl } from '../deriveIndexName';
+import { DEFAULT_EMBEDDING_MODEL, DEFAULT_VECTOR_DIMENSION } from '../settings';
 
 type CrawlOptions = {
   maxPages?: number;
@@ -32,8 +33,6 @@ type PdfParseResult = {
   numpages?: number;
 };
 
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
-const DEFAULT_VECTOR_DIMENSION = 1536; // for text-embedding-3-small (matches shortened text-embedding-3-large)
 const DEFAULT_CRAWLER_UA = 'docs-mcp-crawler/1.0 (+https://hypermodel.dev) axios';
 
 // Simple token estimator: ~4 chars per token as a heuristic for English text

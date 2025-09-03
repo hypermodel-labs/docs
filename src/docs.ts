@@ -18,9 +18,8 @@ import {
   ScopeType,
   AccessLevel,
 } from './scope';
-
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
-const DEFAULT_VECTOR_DIMENSION = 1536; // Shortened from 3072 to match pgvector limits
+import { DEFAULT_EMBEDDING_MODEL } from './settings';
+import { DEFAULT_VECTOR_DIMENSION } from './settings';
 
 async function embedBatch(
   openai: OpenAI,
