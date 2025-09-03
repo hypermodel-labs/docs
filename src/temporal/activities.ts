@@ -93,6 +93,55 @@ function getErrorHeaders(error: unknown): Record<string, unknown> {
   return {};
 }
 
+function extractOpenAIErrorDetails(error: unknown): {
+  message: string;
+  code?: string;
+  type?: string;
+} {
+  try {
+    // Axios/OpenAI SDK shape
+    const response = (error as { response?: { data?: unknown } }).response;
+    const data: unknown = response?.data;
+    const maybeErrObj =
+      (data && (data as Record<string, unknown>)?.error) ||
+      (error as Record<string, unknown>)?.error ||
+      data;
+    const errObj = (maybeErrObj || {}) as Record<string, unknown>;
+    const message: string = String(
+      (errObj.message as unknown) || (error as Record<string, unknown>)?.message || error || ''
+    );
+    const code: string | undefined =
+      (errObj.code as string | undefined) ||
+      ((data as Record<string, unknown> | undefined)?.code as string | undefined);
+    const type: string | undefined =
+      (errObj.type as string | undefined) ||
+      ((data as Record<string, unknown> | undefined)?.type as string | undefined);
+    return { message, code, type };
+  } catch {
+    return { message: String(error || '') };
+  }
+}
+
+function isHardQuotaError(error: unknown): boolean {
+  const { message, code } = extractOpenAIErrorDetails(error);
+  if (code === 'insufficient_quota') return true;
+  const m = (message || '').toLowerCase();
+  return (
+    m.includes('exceeded your current quota') ||
+    m.includes('insufficient quota') ||
+    m.includes('please check your plan and billing')
+  );
+}
+
+function splitIntoBatches<T>(items: T[], size: number): T[][] {
+  const batches: T[][] = [];
+  const n = Math.max(1, Math.floor(size));
+  for (let i = 0; i < items.length; i += n) {
+    batches.push(items.slice(i, i + n));
+  }
+  return batches;
+}
+
 class EmbeddingRateLimiter {
   private readonly requestsPerMinute: number;
   private readonly tokensPerMinute: number;
@@ -204,13 +253,13 @@ class EmbeddingRateLimiter {
   }
 }
 
-// Configure limiter with much more conservative limits to avoid 429s
-const CONFIGURED_RPM = Number(process.env.DOCS_EMBED_RPM || '') || 1000; // Much more conservative
-const CONFIGURED_TPM = Number(process.env.DOCS_EMBED_TPM || '') || 500000; // 500k tokens per minute
-const CONFIGURED_TPD = Number(process.env.DOCS_EMBED_TPD || '') || 1000000000; // 1B tokens per day
-const CONFIGURED_MAX_RETRIES = Number(process.env.DOCS_EMBED_MAX_RETRIES || '') || 6;
+// Configure limiter with conservative defaults; override via env to tune per deployment
+const CONFIGURED_RPM = Number(process.env.DOCS_EMBED_RPM || '') || 60; // requests/minute
+const CONFIGURED_TPM = Number(process.env.DOCS_EMBED_TPM || '') || 100_000; // tokens/minute
+const CONFIGURED_TPD = Number(process.env.DOCS_EMBED_TPD || '') || 25_000_000; // tokens/day
+const CONFIGURED_MAX_RETRIES = Number(process.env.DOCS_EMBED_MAX_RETRIES || '') || 7;
 const CONFIGURED_INITIAL_BACKOFF_MS =
-  Number(process.env.DOCS_EMBED_INITIAL_BACKOFF_MS || '') || 500;
+  Number(process.env.DOCS_EMBED_INITIAL_BACKOFF_MS || '') || 1000;
 
 const embeddingLimiter = new EmbeddingRateLimiter({
   requestsPerMinute: CONFIGURED_RPM,
@@ -731,13 +780,15 @@ export async function indexDocumentationActivity(
     await ensureVectorStore(client, indexName, DEFAULT_VECTOR_DIMENSION);
 
     // Crawl and index
-    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 8; // chunks per embedding batch (reduced from 32)
+    // Clamp batch size to a conservative default; allow env override but cap at 16
+    const configuredBatch = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 6;
+    const batchSize = Math.max(2, Math.min(16, configuredBatch));
     let pendingChunks: { url: string; title: string; content: string }[] = [];
 
     const flush = async () => {
       if (pendingChunks.length === 0) return;
 
-      const maxRetries = 3;
+      const maxRetries = 4;
       let attempt = 0;
       let currentChunks = [...pendingChunks];
 
@@ -780,6 +831,7 @@ export async function indexDocumentationActivity(
           attempt++;
           const status = getErrorStatus(error);
           const isRateLimit = status === 429;
+          const hardQuota = isRateLimit && isHardQuotaError(error);
 
           console.warn(`Batch processing attempt ${attempt} failed:`, {
             error: error instanceof Error ? error.message : String(error),
@@ -788,18 +840,23 @@ export async function indexDocumentationActivity(
             chunkCount: currentChunks.length,
           });
 
+          if (hardQuota) {
+            console.error('Detected hard quota exhaustion. Aborting to avoid futile retries.');
+            throw error;
+          }
+
           if (attempt >= maxRetries) {
             // Final attempt failed - try splitting the batch if it's large enough
             if (currentChunks.length > 1 && isRateLimit) {
               console.warn(
                 `Splitting batch of ${currentChunks.length} chunks into smaller batches`
               );
-              const midpoint = Math.ceil(currentChunks.length / 2);
-              const firstHalf = currentChunks.slice(0, midpoint);
-              const secondHalf = currentChunks.slice(midpoint);
-
-              // Process each half separately with fresh retry attempts
-              for (const subBatch of [firstHalf, secondHalf]) {
+              // Split into small batches of size 3 to reduce pressure
+              const splits = splitIntoBatches(
+                currentChunks,
+                Math.max(2, Math.floor(batchSize / 2))
+              );
+              for (const subBatch of splits) {
                 await processSubBatch(subBatch);
               }
               break;
@@ -814,9 +871,11 @@ export async function indexDocumentationActivity(
             const headers = getErrorHeaders(error);
             const retryAfterHeader = (headers['retry-after'] || headers['Retry-After']) as unknown;
             const retryAfterMs = parseRetryAfter(retryAfterHeader);
+            const jitter = Math.floor(Math.random() * 300);
             if (retryAfterMs !== undefined) {
               delayMs = Math.max(delayMs, retryAfterMs);
             }
+            delayMs += jitter;
           }
 
           console.warn(
@@ -829,7 +888,7 @@ export async function indexDocumentationActivity(
       // Helper function to process sub-batches with their own retry logic
       async function processSubBatch(chunks: typeof currentChunks) {
         let subAttempt = 0;
-        const subMaxRetries = 2;
+        const subMaxRetries = 3;
 
         while (subAttempt < subMaxRetries) {
           try {
@@ -865,6 +924,10 @@ export async function indexDocumentationActivity(
             break; // Success
           } catch (subError) {
             subAttempt++;
+            const subStatus = getErrorStatus(subError);
+            const subIsRateLimit = subStatus === 429;
+            const subHardQuota = subIsRateLimit && isHardQuotaError(subError);
+            if (subHardQuota) throw subError;
             if (subAttempt >= subMaxRetries) {
               console.error(
                 `Sub-batch processing failed after ${subMaxRetries} attempts:`,
@@ -872,7 +935,19 @@ export async function indexDocumentationActivity(
               );
               throw subError;
             }
-            await sleep(2000 * subAttempt); // Simple linear backoff for sub-batches
+            // Jittered exponential backoff honoring Retry-After
+            let subDelayMs = 800 * Math.pow(2, subAttempt - 1);
+            if (subIsRateLimit) {
+              const headers = getErrorHeaders(subError);
+              const retryAfterHeader = (headers['retry-after'] ||
+                headers['Retry-After']) as unknown;
+              const retryAfterMs = parseRetryAfter(retryAfterHeader);
+              if (retryAfterMs !== undefined) {
+                subDelayMs = Math.max(subDelayMs, retryAfterMs);
+              }
+            }
+            subDelayMs += Math.floor(Math.random() * 250);
+            await sleep(subDelayMs);
           }
         }
       }
@@ -1057,13 +1132,15 @@ export async function indexPdfActivity(
       .replace(/\s+/g, ' ')
       .trim();
 
-    const batchSize = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 8; // chunks per embedding batch (reduced from 32)
+    // Clamp batch size to a conservative default; allow env override but cap at 16
+    const configuredBatch = Number(process.env.DOCS_EMBED_BATCH_SIZE || '') || 6;
+    const batchSize = Math.max(2, Math.min(16, configuredBatch));
     let pendingChunks: { url: string; title: string; content: string }[] = [];
 
     const flush = async () => {
       if (pendingChunks.length === 0) return;
 
-      const maxRetries = 3;
+      const maxRetries = 4;
       let attempt = 0;
       let currentChunks = [...pendingChunks];
 
@@ -1112,6 +1189,7 @@ export async function indexPdfActivity(
           attempt++;
           const status = getErrorStatus(error);
           const isRateLimit = status === 429;
+          const hardQuota = isRateLimit && isHardQuotaError(error);
 
           console.warn(`PDF batch processing attempt ${attempt} failed:`, {
             error: error instanceof Error ? error.message : String(error),
@@ -1120,18 +1198,24 @@ export async function indexPdfActivity(
             chunkCount: currentChunks.length,
           });
 
+          if (hardQuota) {
+            console.error(
+              'Detected hard quota exhaustion (pdf). Aborting to avoid futile retries.'
+            );
+            throw error;
+          }
+
           if (attempt >= maxRetries) {
             // Final attempt failed - try splitting the batch if it's large enough
             if (currentChunks.length > 1 && isRateLimit) {
               console.warn(
                 `Splitting PDF batch of ${currentChunks.length} chunks into smaller batches`
               );
-              const midpoint = Math.ceil(currentChunks.length / 2);
-              const firstHalf = currentChunks.slice(0, midpoint);
-              const secondHalf = currentChunks.slice(midpoint);
-
-              // Process each half separately with fresh retry attempts
-              for (const subBatch of [firstHalf, secondHalf]) {
+              const splits = splitIntoBatches(
+                currentChunks,
+                Math.max(2, Math.floor(batchSize / 2))
+              );
+              for (const subBatch of splits) {
                 await processSubBatch(subBatch);
               }
               break;
@@ -1146,9 +1230,11 @@ export async function indexPdfActivity(
             const headers = getErrorHeaders(error);
             const retryAfterHeader = (headers['retry-after'] || headers['Retry-After']) as unknown;
             const retryAfterMs = parseRetryAfter(retryAfterHeader);
+            const jitter = Math.floor(Math.random() * 300);
             if (retryAfterMs !== undefined) {
               delayMs = Math.max(delayMs, retryAfterMs);
             }
+            delayMs += jitter;
           }
 
           console.warn(
@@ -1161,7 +1247,7 @@ export async function indexPdfActivity(
       // Helper function to process sub-batches with their own retry logic
       async function processSubBatch(chunks: typeof currentChunks) {
         let subAttempt = 0;
-        const subMaxRetries = 2;
+        const subMaxRetries = 3;
 
         while (subAttempt < subMaxRetries) {
           try {
@@ -1203,6 +1289,10 @@ export async function indexPdfActivity(
             break; // Success
           } catch (subError) {
             subAttempt++;
+            const subStatus = getErrorStatus(subError);
+            const subIsRateLimit = subStatus === 429;
+            const subHardQuota = subIsRateLimit && isHardQuotaError(subError);
+            if (subHardQuota) throw subError;
             if (subAttempt >= subMaxRetries) {
               console.error(
                 `PDF sub-batch processing failed after ${subMaxRetries} attempts:`,
@@ -1210,7 +1300,18 @@ export async function indexPdfActivity(
               );
               throw subError;
             }
-            await sleep(2000 * subAttempt); // Simple linear backoff for sub-batches
+            let subDelayMs = 800 * Math.pow(2, subAttempt - 1);
+            if (subIsRateLimit) {
+              const headers = getErrorHeaders(subError);
+              const retryAfterHeader = (headers['retry-after'] ||
+                headers['Retry-After']) as unknown;
+              const retryAfterMs = parseRetryAfter(retryAfterHeader);
+              if (retryAfterMs !== undefined) {
+                subDelayMs = Math.max(subDelayMs, retryAfterMs);
+              }
+            }
+            subDelayMs += Math.floor(Math.random() * 250);
+            await sleep(subDelayMs);
           }
         }
       }
