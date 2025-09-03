@@ -6,7 +6,7 @@ export const DEFAULT_EMBEDDING_PROVIDER = 'openai';
 export const DEFAULT_VECTOR_DIMENSION = 512;
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 export const DEFAULT_GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
-export const DEFAULT_GEMINI_VECTOR_DIMENSION = 768;
+export const DEFAULT_GEMINI_VECTOR_DIMENSION = 3072;
 
 // Get embedding provider from environment variable, default to OpenAI
 export function getEmbeddingProvider(): 'openai' | 'gemini' {

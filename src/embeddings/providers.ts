@@ -44,7 +44,7 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
   private model: string;
   private dimensions: number;
 
-  constructor(apiKey: string, model: string = 'gemini-embedding-001', dimensions: number = 768) {
+  constructor(apiKey: string, model: string = 'gemini-embedding-001', dimensions: number = 3072) {
     this.client = new GoogleGenAI({ apiKey });
     this.model = model;
     this.dimensions = dimensions;
@@ -53,17 +53,40 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
 
+    console.warn(
+      `Gemini API request: model=${this.model}, texts=${texts.length}, requestedDimensions=${this.dimensions}`
+    );
+
+    // For now, use default dimensions since outputDimensionality seems to be ignored
     const response = await this.client.models.embedContent({
       model: this.model,
       contents: texts,
-      outputDimensionality: this.dimensions,
     });
 
     if (!response.embeddings) {
       throw new Error('No embeddings returned from Gemini API');
     }
 
-    // According to Gemini docs, only 3072 dimension embeddings are pre-normalized
+    console.warn(`Gemini API response: got ${response.embeddings.length} embeddings`);
+
+    // Check actual dimensions returned
+    const firstEmbedding = response.embeddings[0];
+    if (firstEmbedding?.values) {
+      const actualDimensions = firstEmbedding.values.length;
+      console.warn(
+        `Gemini API actual dimensions: ${actualDimensions}, configured: ${this.dimensions}`
+      );
+
+      // Update our dimensions to match what the API actually returns
+      if (actualDimensions !== this.dimensions) {
+        console.warn(
+          `Updating dimensions from ${this.dimensions} to ${actualDimensions} to match API response`
+        );
+        this.dimensions = actualDimensions;
+      }
+    }
+
+    // According to Gemini docs, 3072 dimension embeddings are pre-normalized
     // All other dimensions need manual normalization
     const embeddings = response.embeddings.map(embedding => {
       const values = embedding.values;
@@ -72,7 +95,8 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
         throw new Error('No values in embedding response');
       }
 
-      if (this.dimensions !== 3072) {
+      // Gemini's default is 3072 dimensions and they come pre-normalized
+      if (values.length !== 3072) {
         // Normalize the embedding vector for better semantic similarity
         const magnitude = Math.sqrt(values.reduce((sum, val) => sum + val * val, 0));
         if (magnitude === 0) {
