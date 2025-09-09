@@ -655,6 +655,75 @@ async function crawlSite(
   let active = 0;
   let stopped = false;
 
+  // Per-domain pacing and cooldown state
+  const domainState = new Map<
+    string,
+    { lastRequestAt: number; cooldownUntil: number; saw429: boolean }
+  >();
+  const getDomainState = (host: string) => {
+    let s = domainState.get(host);
+    if (!s) {
+      s = { lastRequestAt: 0, cooldownUntil: 0, saw429: false };
+      domainState.set(host, s);
+    }
+    return s;
+  };
+  const domainInflight = new Map<string, number>();
+  const maxPerDomainConcurrency = Number(process.env.DOCS_PER_DOMAIN_CONCURRENCY || '') || 1;
+  const fullJitter = (base: number) => Math.floor(Math.random() * Math.max(1, base));
+  const randomBetween = (minMs: number, maxMs: number) =>
+    minMs + Math.floor(Math.random() * Math.max(0, maxMs - minMs + 1));
+
+  async function acquireDomainSlot(host: string) {
+    while ((domainInflight.get(host) || 0) >= maxPerDomainConcurrency) {
+      await sleep(100 + fullJitter(200));
+    }
+    domainInflight.set(host, (domainInflight.get(host) || 0) + 1);
+  }
+
+  function releaseDomainSlot(host: string) {
+    const current = domainInflight.get(host) || 0;
+    if (current <= 1) domainInflight.delete(host);
+    else domainInflight.set(host, current - 1);
+  }
+
+  async function waitForDomain(host: string) {
+    const s = getDomainState(host);
+    const now = Date.now();
+    // Honor cooldowns (e.g., after 429)
+    if (s.cooldownUntil > now) {
+      await sleep(s.cooldownUntil - now);
+    }
+    // Target ~0.5–1 req/sec average with jitter (1–2s between requests)
+    const minDelay = 1000;
+    const maxDelay = 2000;
+    const elapsed = now - s.lastRequestAt;
+    const targetDelay = randomBetween(minDelay, maxDelay);
+    if (elapsed < targetDelay) {
+      await sleep(targetDelay - elapsed);
+    }
+  }
+
+  function applyRateLimitCooldown(host: string, headers: Record<string, unknown>): number {
+    const s = getDomainState(host);
+    const retryAfterHeader = (headers['retry-after'] || headers['Retry-After']) as unknown;
+    const retryAfterMs = parseRetryAfter(retryAfterHeader) ?? 0;
+    const now = Date.now();
+    let cooldownMs = 0;
+    if (!s.saw429) {
+      // First 429: long cooldown 5–15 minutes (honor Retry-After if larger)
+      const longCooldownMs = randomBetween(5 * 60_000, 15 * 60_000);
+      cooldownMs = Math.max(longCooldownMs, retryAfterMs);
+      s.saw429 = true;
+    } else {
+      // Subsequent 429: shorter exponential-ish cooldown plus jitter, still honor Retry-After
+      const base = 5000; // 5s base
+      cooldownMs = Math.max(retryAfterMs, base + fullJitter(5000));
+    }
+    s.cooldownUntil = Math.max(s.cooldownUntil, now + cooldownMs);
+    return cooldownMs;
+  }
+
   const next = async (): Promise<void> => {
     if (stopped) return;
     if (visited.size >= maxPages) return;
@@ -664,6 +733,9 @@ async function crawlSite(
     visited.add(current);
     active += 1;
     try {
+      const host = new URL(current).hostname;
+      await acquireDomainSlot(host);
+      await waitForDomain(host);
       const res = await http.get(current, {
         timeout: timeoutMs,
         responseType: 'text',
@@ -752,12 +824,36 @@ async function crawlSite(
       });
 
       // Handle 403/429 status codes with backoff
-      if (status === 403 || status === 429) {
-        console.warn(`Status ${status} encountered for ${current}, backing off`);
-        await sleep(2000);
+      if (status === 429) {
+        const host = new URL(current).hostname;
+        const cooldownMs = applyRateLimitCooldown(host, headers);
+        console.warn(
+          `Status 429 encountered for ${current}, cooling down ${host} for ~${Math.round(
+            cooldownMs / 1000
+          )}s`
+        );
+      } else if (status === 403) {
+        // Conservative cooldown on 403 to reduce pressure
+        const host = new URL(current).hostname;
+        const s = getDomainState(host);
+        const now = Date.now();
+        const cooldownMs = randomBetween(60_000, 180_000);
+        s.cooldownUntil = Math.max(s.cooldownUntil, now + cooldownMs);
+        console.warn(
+          `Status 403 encountered for ${current}, cooling down ${host} for ~${Math.round(
+            cooldownMs / 1000
+          )}s`
+        );
       }
       return; // bail on this URL
     } finally {
+      try {
+        const host = new URL(current).hostname;
+        getDomainState(host).lastRequestAt = Date.now();
+        releaseDomainSlot(host);
+      } catch {
+        // ignore URL parse errors for pacing
+      }
       active -= 1;
       if (queue.length && visited.size < maxPages) {
         void fill();
