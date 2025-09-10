@@ -45,6 +45,11 @@ async function run() {
     workflowsPath: path.join(path.dirname(fileURLToPath(import.meta.url)), 'workflows.js'),
     activities,
     taskQueue: 'docs-indexing',
+    maxConcurrentActivityTaskExecutions: 128,
+    maxConcurrentLocalActivityExecutions: 128,
+    maxConcurrentActivityTaskPolls: 8,
+    maxConcurrentWorkflowTaskExecutions: 24, // ~3× cores
+    maxConcurrentWorkflowTaskPolls: 3,
   });
 
   console.warn('Worker started, listening on task queue: docs-indexing');
