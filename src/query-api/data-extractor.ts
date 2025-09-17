@@ -1,15 +1,39 @@
 import { ParsedQuery, EnrichedData } from './types';
 import Anthropic from '@anthropic-ai/sdk';
+import { Client as PgClient } from 'pg';
+import { createEmbeddingProvider, EmbeddingProvider } from '../embeddings/providers';
+import { getUserContext, hasAccess, getAccessibleIndexes } from '../scope';
+import { getEmbeddingConfig } from '../settings';
 
 export class DataExtractor {
   private anthropic: Anthropic;
   private mcpTools?: any; // MCP tools if available
+  private embeddingProvider?: EmbeddingProvider;
 
   constructor(apiKey?: string, mcpTools?: any) {
     this.anthropic = new Anthropic({
       apiKey: apiKey || process.env.ANTHROPIC_API_KEY,
     });
     this.mcpTools = mcpTools;
+  }
+
+  private async createEmbeddingProviderInstance(): Promise<EmbeddingProvider> {
+    if (this.embeddingProvider) {
+      return this.embeddingProvider;
+    }
+
+    const config = getEmbeddingConfig();
+
+    if (!config.apiKey) {
+      throw new Error(`${config.provider.toUpperCase()}_API_KEY not set`);
+    }
+
+    console.warn(
+      `Using ${config.provider} embedding provider with model ${config.model} and ${config.dimensions} dimensions`
+    );
+
+    this.embeddingProvider = createEmbeddingProvider(config.provider, config.apiKey, config.model, config.dimensions);
+    return this.embeddingProvider;
   }
 
   async extractAndEnrichData(parsedQuery: ParsedQuery, extractionPlan: string[]): Promise<EnrichedData> {
@@ -39,9 +63,109 @@ export class DataExtractor {
   }
 
   private async extractBaseData(query: ParsedQuery): Promise<Record<string, unknown>[]> {
-    // In a real implementation, this would query actual data sources
-    // For now, we'll use Claude to simulate data extraction
+    // Check if we can use vector search from the documentation database
+    const connectionString = process.env.POSTGRES_CONNECTION_STRING;
     
+    if (connectionString) {
+      try {
+        return await this.searchDocumentationDatabase(query);
+      } catch (error) {
+        console.warn('Failed to search documentation database, falling back to generated data:', error);
+      }
+    }
+
+    // Fallback to Claude generation if database is not available
+    return this.generateDataWithClaude(query);
+  }
+
+  private async searchDocumentationDatabase(query: ParsedQuery): Promise<Record<string, unknown>[]> {
+    const connectionString = process.env.POSTGRES_CONNECTION_STRING;
+    if (!connectionString) {
+      throw new Error('POSTGRES_CONNECTION_STRING not set');
+    }
+
+    const client = new PgClient({ connectionString });
+    try {
+      await client.connect();
+
+      // Get user context and accessible indexes
+      const context = await getUserContext(client);
+      const accessibleIndexes = await getAccessibleIndexes(client, context);
+
+      if (accessibleIndexes.length === 0) {
+        throw new Error('No accessible indexes available');
+      }
+
+      // Use the first accessible index or a specific one based on query
+      const index = this.selectBestIndex(accessibleIndexes, query);
+      const table = `docs_${index}`;
+      const quotedTable = `"${table}"`;
+
+      // Generate embedding for the query
+      const embeddingProvider = await this.createEmbeddingProviderInstance();
+      const queryText = `${query.intent} ${JSON.stringify(query.filters)} ${query.columns.join(' ')}`;
+      const [embedding] = await embeddingProvider.embedBatch([queryText]);
+      const vectorParam = `[${embedding.join(',')}]`;
+
+      // Query by cosine distance with a higher limit to account for filtering
+      const searchLimit = Math.min((query.limit || 10) * 3, 100); // Get 3x requested to allow for filtering
+      
+      const { rows } = await client.query<{
+        url: string;
+        title: string;
+        content: string;
+        score: number;
+      }>(
+        `SELECT url, title, content, 1 - (embedding <=> $1::vector) AS score
+         FROM ${quotedTable}
+         ORDER BY embedding <=> $1::vector
+         LIMIT $2`,
+        [vectorParam, searchLimit]
+      );
+
+      // Transform results to match expected format
+      const results = rows.map(r => ({
+        name: r.title || 'Unknown',
+        domain: this.extractDomainFromUrl(r.url),
+        url: r.url,
+        description: r.content?.slice(0, 200),
+        relevance_score: r.score,
+        source: 'documentation_db',
+        index_name: index,
+      }));
+
+      return results;
+    } finally {
+      await client.end();
+    }
+  }
+
+  private selectBestIndex(indexes: string[], query: ParsedQuery): string {
+    // Try to match index based on query filters or intent
+    const queryText = query.intent.toLowerCase();
+    
+    // Look for industry or domain-specific matches
+    for (const index of indexes) {
+      if (queryText.includes(index.toLowerCase()) || 
+          JSON.stringify(query.filters).toLowerCase().includes(index.toLowerCase())) {
+        return index;
+      }
+    }
+
+    // Default to first available index
+    return indexes[0];
+  }
+
+  private extractDomainFromUrl(url: string): string {
+    try {
+      const urlObj = new URL(url);
+      return urlObj.hostname;
+    } catch {
+      return 'unknown.com';
+    }
+  }
+
+  private async generateDataWithClaude(query: ParsedQuery): Promise<Record<string, unknown>[]> {
     const systemPrompt = `You are a data extraction system. Generate sample business data based on the query filters provided.
     
 Create realistic company data with the requested fields. Each company should have:
@@ -78,7 +202,7 @@ Return the data as a JSON array.`;
 
       return JSON.parse(jsonMatch[0]) as Record<string, unknown>[];
     } catch (error) {
-      console.error('Error extracting base data:', error);
+      console.error('Error generating data with Claude:', error);
       // Return sample data as fallback
       return this.generateSampleData(query);
     }
@@ -211,6 +335,14 @@ Return the data as a JSON array.`;
 
   private getDataSources(): string[] {
     // Return the data sources used for extraction
-    return ['internal_database', 'enrichment_api', 'claude_ai'];
+    const sources = [];
+    if (process.env.POSTGRES_CONNECTION_STRING) {
+      sources.push('documentation_vector_db');
+    }
+    if (process.env.ANTHROPIC_API_KEY) {
+      sources.push('claude_ai');
+    }
+    sources.push('enrichment_api', 'fallback_samples');
+    return sources;
   }
 }
