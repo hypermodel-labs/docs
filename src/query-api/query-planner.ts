@@ -1,17 +1,13 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { query } from '@anthropic-ai/claude-code';
 import { ParsedQuery } from './types';
 
 export class QueryPlanner {
-  private anthropic: Anthropic;
-
-  constructor(apiKey?: string) {
-    this.anthropic = new Anthropic({
-      apiKey: apiKey || process.env.ANTHROPIC_API_KEY,
-    });
+  constructor() {
+    // Claude Code SDK uses environment variables automatically
   }
 
-  async parseAndPlanQuery(query: string): Promise<ParsedQuery> {
-    const systemPrompt = `You are a data query parser and planner. Your job is to parse natural language queries about business datasets and extract structured information.
+  async parseAndPlanQuery(queryString: string): Promise<ParsedQuery> {
+    const prompt = `You are a data query parser and planner. Your job is to parse natural language queries about business datasets and extract structured information.
 
 Extract the following from the user's query:
 1. Intent: What type of data they're looking for
@@ -19,6 +15,8 @@ Extract the following from the user's query:
 3. Columns: What fields they want in the response
 4. Limit: How many records (if specified)
 5. Sort: How to order results (if specified)
+
+User Query: ${queryString}
 
 Return your response as a valid JSON object with these keys:
 {
@@ -28,28 +26,27 @@ Return your response as a valid JSON object with these keys:
   "limit": number or null,
   "sortBy": "column_name" or null,
   "sortOrder": "asc" or "desc" or null
-}`;
+}
+
+Provide ONLY the JSON object, no additional text.`;
 
     try {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-latest',
-        max_tokens: 1000,
-        temperature: 0,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: query,
-          },
-        ],
+      const response = query({
+        prompt,
+        options: {
+          model: 'claude-3-5-sonnet-latest',
+          maxTurns: 1,
+        },
       });
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type from Claude');
+      let responseText = '';
+      for await (const message of response) {
+        if (message.type === 'text') {
+          responseText += message.text;
+        }
       }
 
-      const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         throw new Error('No JSON found in Claude response');
       }
@@ -63,7 +60,7 @@ Return your response as a valid JSON object with these keys:
   }
 
   async generateDataExtractionPlan(parsedQuery: ParsedQuery): Promise<string[]> {
-    const systemPrompt = `You are a data extraction planner. Given a parsed query, generate a step-by-step plan to extract and enrich the requested data.
+    const prompt = `You are a data extraction planner. Given a parsed query, generate a step-by-step plan to extract and enrich the requested data.
 
 Consider:
 1. What data sources to query
@@ -71,28 +68,27 @@ Consider:
 3. How to filter and transform the data
 4. The order of operations for efficiency
 
-Return a JSON array of step descriptions.`;
+Parsed Query: ${JSON.stringify(parsedQuery, null, 2)}
+
+Return a JSON array of step descriptions. Provide ONLY the JSON array, no additional text.`;
 
     try {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-latest',
-        max_tokens: 1000,
-        temperature: 0,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: JSON.stringify(parsedQuery),
-          },
-        ],
+      const response = query({
+        prompt,
+        options: {
+          model: 'claude-3-5-sonnet-latest',
+          maxTurns: 1,
+        },
       });
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type from Claude');
+      let responseText = '';
+      for await (const message of response) {
+        if (message.type === 'text') {
+          responseText += message.text;
+        }
       }
 
-      const jsonMatch = content.text.match(/\[[\s\S]*\]/);
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
       if (!jsonMatch) {
         throw new Error('No JSON array found in Claude response');
       }
