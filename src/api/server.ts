@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import pdfExtractionRouter from './pdf-extraction';
+import { createQueryAPIModule } from './index';
 
 dotenv.config();
 
@@ -34,6 +35,10 @@ app.get('/health', (req, res) => {
 
 app.use('/api/v1/pdf', pdfExtractionRouter);
 
+// Install Query API endpoints
+const queryAPI = createQueryAPIModule();
+app.use('/api/v1/query', queryAPI.router);
+
 app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Error:', err);
   res.status(500).json({
@@ -45,10 +50,16 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
 
 export function startServer() {
   app.listen(PORT, () => {
-    console.log(`PDF Extraction API server running on port ${PORT}`);
+    console.log(`API server running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`API endpoint:`);
-    console.log(`  POST http://localhost:${PORT}/api/v1/pdf/extract`);
+    console.log(`Available API endpoints:`);
+    console.log(`  PDF Extraction:`);
+    console.log(`    POST http://localhost:${PORT}/api/v1/pdf/extract`);
+    console.log(`  Query API:`);
+    console.log(`    GET  http://localhost:${PORT}/api/v1/query/health`);
+    console.log(`    POST http://localhost:${PORT}/api/v1/query/query`);
+    console.log(`    GET  http://localhost:${PORT}/api/v1/query/query/:id`);
+    console.log(`    GET  http://localhost:${PORT}/api/v1/query/queries`);
   });
 }
 

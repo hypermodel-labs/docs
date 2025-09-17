@@ -31,28 +31,34 @@ Return your response as a valid JSON object with these keys:
 Provide ONLY the JSON object, no additional text.`;
 
     try {
-      const response = query({
+      const response = await query({
         prompt,
         options: {
-          model: 'claude-3-5-sonnet-latest',
           maxTurns: 1,
-        },
+        }
       });
 
-      let responseText = '';
+      // Collect the full response
+      let fullResponse = '';
       for await (const message of response) {
         if (message.type === 'text') {
-          responseText += message.text;
+          fullResponse += message.text;
         }
       }
 
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in Claude response');
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]) as ParsedQuery;
-      return parsed;
+      // Parse the JSON response
+      const parsedResponse = JSON.parse(fullResponse);
+      
+      const parsedQuery: ParsedQuery = {
+        intent: parsedResponse.intent || '',
+        filters: parsedResponse.filters || {},
+        columns: parsedResponse.columns || [],
+        limit: parsedResponse.limit || null,
+        sortBy: parsedResponse.sortBy || null,
+        sortOrder: parsedResponse.sortOrder || null,
+      };
+      
+      return parsedQuery;
     } catch (error) {
       console.error('Error parsing query with Claude:', error);
       throw new Error(`Failed to parse query: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -73,27 +79,29 @@ Parsed Query: ${JSON.stringify(parsedQuery, null, 2)}
 Return a JSON array of step descriptions. Provide ONLY the JSON array, no additional text.`;
 
     try {
-      const response = query({
+      const response = await query({
         prompt,
         options: {
-          model: 'claude-3-5-sonnet-latest',
           maxTurns: 1,
-        },
+        }
       });
 
-      let responseText = '';
+      // Collect the full response
+      let fullResponse = '';
       for await (const message of response) {
         if (message.type === 'text') {
-          responseText += message.text;
+          fullResponse += message.text;
         }
       }
 
-      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        throw new Error('No JSON array found in Claude response');
+      // Parse the JSON array response
+      const steps = JSON.parse(fullResponse);
+      
+      if (!Array.isArray(steps)) {
+        throw new Error('Expected an array of steps');
       }
-
-      return JSON.parse(jsonMatch[0]) as string[];
+      
+      return steps;
     } catch (error) {
       console.error('Error generating extraction plan:', error);
       throw new Error(`Failed to generate extraction plan: ${error instanceof Error ? error.message : 'Unknown error'}`);
