@@ -8,7 +8,7 @@ import { detect } from 'detect-port';
 import { randomUUID } from 'crypto';
 import type { OAuthModule } from './oauth/oauth';
 import type { UserModule } from './user/user';
-import { createQueryAPIModule } from './query-api';
+import { createQueryAPIModule } from './api';
 
 /**
  * Similar to https://github.com/modelcontextprotocol/typescript-sdk/pull/197/files
