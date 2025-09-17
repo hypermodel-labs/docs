@@ -37,6 +37,7 @@ export interface EnrichedData {
     totalRecords: number;
     enrichedAt: Date;
     sources: string[];
+    message?: string;
   };
 }
 

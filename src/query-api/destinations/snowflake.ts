@@ -25,6 +25,14 @@ export class SnowflakeDestination extends BaseDestination {
       };
     }
 
+    // Check if there's no data to send
+    if (!data.data || data.data.length === 0) {
+      return {
+        success: false,
+        error: data.metadata.message || 'No data available to send',
+      };
+    }
+
     try {
       // Create connection string for Snowflake
       // Note: In production, you'd use the official Snowflake Node.js driver

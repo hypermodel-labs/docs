@@ -15,6 +15,14 @@ export class URLDestination extends BaseDestination {
       return { success: false, error: 'URL endpoint is required' };
     }
 
+    // Check if there's no data to send
+    if (!data.data || data.data.length === 0) {
+      return {
+        success: false,
+        error: data.metadata.message || 'No data available to send',
+      };
+    }
+
     try {
       const response = await axios.post(endpoint, data, {
         headers: {

@@ -19,6 +19,14 @@ export class SheetsDestination extends BaseDestination {
       };
     }
 
+    // Check if there's no data to send
+    if (!data.data || data.data.length === 0) {
+      return {
+        success: false,
+        error: data.metadata.message || 'No data available to send',
+      };
+    }
+
     try {
       // Prepare data for Google Sheets
       const rows = this.formatDataForSheets(data);

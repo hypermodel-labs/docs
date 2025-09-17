@@ -41,6 +41,20 @@ export class DataExtractor {
       // Step 1: Extract base data based on the query
       const baseData = await this.extractBaseData(parsedQuery);
 
+      // Check if we have any data
+      if (!baseData || baseData.length === 0) {
+        return {
+          id: this.generateId(),
+          data: [],
+          metadata: {
+            totalRecords: 0,
+            enrichedAt: new Date(),
+            sources: this.getDataSources(),
+            message: 'No data available. Please ensure database is configured or API keys are set.',
+          },
+        };
+      }
+
       // Step 2: Enrich data with additional information
       const enrichedData = await this.enrichData(baseData, parsedQuery.columns);
 
@@ -75,7 +89,18 @@ export class DataExtractor {
     }
 
     // Fallback to Claude generation if database is not available
-    return this.generateDataWithClaude(query);
+    const claudeApiKey = process.env.ANTHROPIC_API_KEY;
+    if (claudeApiKey) {
+      try {
+        return await this.generateDataWithClaude(query);
+      } catch (error) {
+        console.error('Failed to generate data with Claude:', error);
+        throw new Error('No data sources available. Please configure database connection or provide API keys.');
+      }
+    }
+    
+    // No data sources available
+    throw new Error('No data sources configured. Please set POSTGRES_CONNECTION_STRING for database access or ANTHROPIC_API_KEY for AI generation.');
   }
 
   private async searchDocumentationDatabase(query: ParsedQuery): Promise<Record<string, unknown>[]> {
@@ -203,8 +228,8 @@ Return the data as a JSON array.`;
       return JSON.parse(jsonMatch[0]) as Record<string, unknown>[];
     } catch (error) {
       console.error('Error generating data with Claude:', error);
-      // Return sample data as fallback
-      return this.generateSampleData(query);
+      // Re-throw error instead of returning sample data
+      throw new Error(`Claude API failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -226,13 +251,14 @@ Return the data as a JSON array.`;
     }
 
     // In a real implementation, this would call various enrichment APIs
-    // For now, we'll simulate enrichment
+    // For now, skip enrichment if not available
     return baseData.map(record => {
       const enrichedRecord = { ...record };
       
       for (const field of enrichmentNeeded) {
         if (!enrichedRecord[field]) {
-          enrichedRecord[field] = this.generateEnrichmentData(field, record);
+          // Mark fields as unavailable rather than generating fake data
+          enrichedRecord[field] = '[Data not available]';
         }
       }
       
@@ -290,44 +316,9 @@ Return the data as a JSON array.`;
     return filteredData;
   }
 
-  private generateEnrichmentData(field: string, record: Record<string, unknown>): string {
-    // Simulate enrichment based on field type
-    const companyName = (record.name as string) || 'Company';
-    const domain = (record.domain as string) || 'example.com';
-    
-    switch (true) {
-      case field.includes('linkedin'):
-        return `https://linkedin.com/in/${companyName.toLowerCase().replace(/\s+/g, '-')}`;
-      case field.includes('phone'):
-        return `+1-555-${Math.floor(Math.random() * 900) + 100}-${Math.floor(Math.random() * 9000) + 1000}`;
-      case field.includes('email'):
-        return `contact@${domain}`;
-      case field.includes('revenue'):
-        return `$${Math.floor(Math.random() * 100) + 10}M`;
-      case field.includes('employees'):
-        return `${Math.floor(Math.random() * 1000) + 50}`;
-      default:
-        return 'N/A';
-    }
-  }
+  // Removed generateEnrichmentData method - no longer generating fake data
 
-  private generateSampleData(query: ParsedQuery): Record<string, unknown>[] {
-    // Generate sample data as fallback
-    const sampleCompanies = [
-      { name: 'TechStart Inc', domain: 'techstart.com', industry: 'Technology', funding_round: 'Series A' },
-      { name: 'DataFlow Systems', domain: 'dataflow.io', industry: 'Data Analytics', funding_round: 'Series B' },
-      { name: 'CloudNine Solutions', domain: 'cloudnine.com', industry: 'Cloud Services', funding_round: 'Series A' },
-      { name: 'AI Innovations', domain: 'aiinnov.com', industry: 'Artificial Intelligence', funding_round: 'Seed' },
-      { name: 'FinTech Pro', domain: 'fintechpro.com', industry: 'Financial Technology', funding_round: 'Series C' },
-      { name: 'HealthTech Plus', domain: 'healthtechplus.com', industry: 'Healthcare', funding_round: 'Series A' },
-      { name: 'EcoSmart Solutions', domain: 'ecosmart.com', industry: 'CleanTech', funding_round: 'Series B' },
-      { name: 'CyberSecure Inc', domain: 'cybersecure.com', industry: 'Cybersecurity', funding_round: 'Series A' },
-      { name: 'EdTech Advance', domain: 'edtechadvance.com', industry: 'Education Technology', funding_round: 'Seed' },
-      { name: 'LogiFlow Systems', domain: 'logiflow.com', industry: 'Logistics', funding_round: 'Series A' },
-    ];
-
-    return sampleCompanies.slice(0, query.limit || 10);
-  }
+  // Removed generateSampleData method - no longer returning sample/mock data
 
   private generateId(): string {
     return `query_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -342,7 +333,7 @@ Return the data as a JSON array.`;
     if (process.env.ANTHROPIC_API_KEY) {
       sources.push('claude_ai');
     }
-    sources.push('enrichment_api', 'fallback_samples');
+    sources.push('enrichment_api');
     return sources;
   }
 }

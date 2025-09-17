@@ -19,6 +19,14 @@ export class ClayDestination extends BaseDestination {
       };
     }
 
+    // Check if there's no data to send
+    if (!data.data || data.data.length === 0) {
+      return {
+        success: false,
+        error: data.metadata.message || 'No data available to send',
+      };
+    }
+
     try {
       // Clay API expects data in a specific format
       const clayData = this.formatDataForClay(data);
