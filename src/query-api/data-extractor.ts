@@ -1,19 +1,14 @@
 import { ParsedQuery, EnrichedData } from './types';
-import Anthropic from '@anthropic-ai/sdk';
 import { Client as PgClient } from 'pg';
 import { createEmbeddingProvider, EmbeddingProvider } from '../embeddings/providers';
 import { getUserContext, hasAccess, getAccessibleIndexes } from '../scope';
 import { getEmbeddingConfig } from '../settings';
 
 export class DataExtractor {
-  private anthropic: Anthropic;
   private mcpTools?: any; // MCP tools if available
   private embeddingProvider?: EmbeddingProvider;
 
-  constructor(apiKey?: string, mcpTools?: any) {
-    this.anthropic = new Anthropic({
-      apiKey: apiKey || process.env.ANTHROPIC_API_KEY,
-    });
+  constructor(mcpTools?: any) {
     this.mcpTools = mcpTools;
   }
 
@@ -50,7 +45,7 @@ export class DataExtractor {
             totalRecords: 0,
             enrichedAt: new Date(),
             sources: this.getDataSources(),
-            message: 'No data available. Please ensure database is configured or API keys are set.',
+            message: 'No data available. Please ensure database is configured with POSTGRES_CONNECTION_STRING.',
           },
         };
       }
@@ -88,19 +83,8 @@ export class DataExtractor {
       }
     }
 
-    // Fallback to Claude generation if database is not available
-    const claudeApiKey = process.env.ANTHROPIC_API_KEY;
-    if (claudeApiKey) {
-      try {
-        return await this.generateDataWithClaude(query);
-      } catch (error) {
-        console.error('Failed to generate data with Claude:', error);
-        throw new Error('No data sources available. Please configure database connection or provide API keys.');
-      }
-    }
-    
-    // No data sources available
-    throw new Error('No data sources configured. Please set POSTGRES_CONNECTION_STRING for database access or ANTHROPIC_API_KEY for AI generation.');
+    // No fallback - only use real data from database
+    throw new Error('No database configured. Please set POSTGRES_CONNECTION_STRING to enable data extraction.');
   }
 
   private async searchDocumentationDatabase(query: ParsedQuery): Promise<Record<string, unknown>[]> {
@@ -190,48 +174,7 @@ export class DataExtractor {
     }
   }
 
-  private async generateDataWithClaude(query: ParsedQuery): Promise<Record<string, unknown>[]> {
-    const systemPrompt = `You are a data extraction system. Generate sample business data based on the query filters provided.
-    
-Create realistic company data with the requested fields. Each company should have:
-- Unique identifiers (name, domain)
-- Relevant business information
-- Contact details where requested
-
-Generate between 10-20 records that match the criteria.
-Return the data as a JSON array.`;
-
-    try {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-latest',
-        max_tokens: 4000,
-        temperature: 0.7,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: `Extract data matching these criteria: ${JSON.stringify(query)}`,
-          },
-        ],
-      });
-
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type');
-      }
-
-      const jsonMatch = content.text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        throw new Error('No JSON array found in response');
-      }
-
-      return JSON.parse(jsonMatch[0]) as Record<string, unknown>[];
-    } catch (error) {
-      console.error('Error generating data with Claude:', error);
-      // Re-throw error instead of returning sample data
-      throw new Error(`Claude API failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
+  // Removed generateDataWithClaude method - only using real data from vector database
 
   private async enrichData(
     baseData: Record<string, unknown>[],
