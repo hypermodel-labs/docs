@@ -11,7 +11,8 @@ WORKDIR /app
 # Install dependencies first (better caching)
 COPY package.json pnpm-lock.yaml ./
 COPY scripts/patch-pdf-parse.js ./scripts/patch-pdf-parse.js
-RUN pnpm install
+RUN pnpm install && \
+    node scripts/patch-pdf-parse.js
 
 # Copy source and build
 COPY . .
@@ -21,7 +22,10 @@ RUN pnpm build
 FROM node:20-bookworm-slim AS runner
 
 # Install CA certificates and Playwright dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends --allow-unauthenticated \
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get update && \
+    apt-get install -y --fix-missing --no-install-recommends \
     ca-certificates \
     # Playwright/Chromium dependencies (minimal set)
     libnss3 \
@@ -80,6 +84,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./
 RUN corepack enable && \
     corepack prepare pnpm@8.9.0 --activate && \
     pnpm install --prod && \
+    node scripts/patch-pdf-parse.js && \
     # Install Playwright Chromium browser with retry logic
     npx playwright install chromium --with-deps || npx playwright install chromium
 
