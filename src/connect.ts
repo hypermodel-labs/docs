@@ -8,6 +8,7 @@ import { detect } from 'detect-port';
 import { randomUUID } from 'crypto';
 import type { OAuthModule } from './oauth/oauth';
 import type { UserModule } from './user/user';
+import { createQueryAPIModule } from './api';
 
 /**
  * Similar to https://github.com/modelcontextprotocol/typescript-sdk/pull/197/files
@@ -312,6 +313,10 @@ export async function connectServer(
   if (opts?.user) {
     opts.user.install(app);
   }
+
+  // Install Query API endpoints
+  const queryAPI = createQueryAPIModule();
+  app.use('/api', queryAPI.router);
 
   app.listen(port, () => {
     if (port !== DEFAULT_PORT) {
