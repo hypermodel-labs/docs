@@ -5,6 +5,7 @@ import { createDocsTool } from './docs';
 import express from 'express';
 import { createOAuthModule } from './oauth/oauth';
 import { createUserModule } from './user/user';
+import { createAPIModule } from './api';
 
 const args = process.argv.slice(2);
 const useStdioTransport =
@@ -15,7 +16,8 @@ async function main(): Promise<express.Application | undefined> {
   createDocsTool(server);
   const oauth = createOAuthModule({ mcpPath: '/mcp' });
   const user = createUserModule();
-  const app = connectServer(server, useStdioTransport, { oauth, user });
+  const api = createAPIModule();
+  const app = connectServer(server, useStdioTransport, { oauth, user, api });
   return app;
 }
 

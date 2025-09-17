@@ -8,6 +8,7 @@ import { detect } from 'detect-port';
 import { randomUUID } from 'crypto';
 import type { OAuthModule } from './oauth/oauth';
 import type { UserModule } from './user/user';
+import type { APIModule } from './api';
 
 /**
  * Similar to https://github.com/modelcontextprotocol/typescript-sdk/pull/197/files
@@ -74,7 +75,7 @@ const DEFAULT_PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 export async function connectServer(
   server: McpServer,
   useStdioTransport: boolean,
-  opts?: { oauth?: OAuthModule; user?: UserModule }
+  opts?: { oauth?: OAuthModule; user?: UserModule; api?: APIModule }
 ): Promise<express.Application | undefined> {
   if (useStdioTransport) {
     console.error('Connecting to MCP server over stdio');
@@ -311,6 +312,11 @@ export async function connectServer(
   // Install User endpoints if provided
   if (opts?.user) {
     opts.user.install(app);
+  }
+
+  // Install API endpoints if provided
+  if (opts?.api) {
+    opts.api.install(app);
   }
 
   app.listen(port, () => {
