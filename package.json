@@ -33,6 +33,7 @@
     "author": "Hypermodel Labs",
     "description": "MCP server for enhanced documentation for AI coding agents",
     "dependencies": {
+        "@anthropic-ai/sdk": "^0.62.0",
         "@google/genai": "^1.16.0",
         "@modelcontextprotocol/sdk": "^1.17.3",
         "@temporalio/client": "^1.12.1",
