@@ -30,6 +30,7 @@ export default defineConfig(({ command }) => {
           index: './src/index.ts',
           'temporal/worker': './src/temporal/worker.ts',
           'temporal/workflows': './src/temporal/workflows.ts',
+          'api/server': './src/api/server.ts',
         },
         output: {
           format: 'es' as const,
@@ -49,6 +50,7 @@ export default defineConfig(({ command }) => {
           '@temporalio/worker',
           '@temporalio/workflow',
           'pdf-parse',
+          '@google/genai',
         ],
       },
       sourcemap: true,
